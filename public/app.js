@@ -110,9 +110,11 @@ function toast(message, isError = false) {
   node.className = isError ? 'toast error' : 'toast';
   node.hidden = false;
   clearTimeout(toast._t);
+  // 실패 사유는 길어서(HTTP 상태·컬리 안내 문구) 짧게 지나가면 읽을 수 없습니다.
+  const shownMs = isError && message.length > 120 ? 15000 : 3600;
   toast._t = setTimeout(() => {
     node.hidden = true;
-  }, 3600);
+  }, shownMs);
 }
 
 async function api(path, options = {}) {
@@ -458,6 +460,8 @@ function renderKurlyCard() {
       meta.textContent = `${k.account || '컬리 계정'} 연결됨${k.lastVerifiedAt ? ` · 확인 ${shortDate(k.lastVerifiedAt)}` : ''}`;
     } else if (k.status === 'expired') {
       meta.textContent = k.lastError || '컬리 로그인이 만료되었어요. 다시 연결해 주세요.';
+    } else if (k.lastError) {
+      meta.textContent = '지난 연결에 실패했어요. 아래 사유를 확인해 주세요.';
     } else {
       meta.textContent = '계정을 연결하면 정해진 날 자동으로 담아드려요.';
     }
@@ -469,6 +473,9 @@ function renderKurlyCard() {
       stateText.textContent = `${k.account || '컬리 계정'} · ${k.connectedAt ? shortDate(k.connectedAt) + ' 연결' : '연결됨'} · 세션은 암호화해 보관합니다.`;
     } else if (k.status === 'expired') {
       stateText.textContent = k.lastError || '세션이 만료되었습니다. 아이디·비밀번호로 다시 연결해 주세요.';
+    } else if (k.lastError) {
+      // 컬리가 돌려준 실제 사유(HTTP 상태·errorCode·안내 문구)를 계속 보이게 둡니다.
+      stateText.textContent = k.lastError;
     } else {
       stateText.textContent = '아이디·비밀번호로 한 번만 연결하면, 이후에는 암호화된 로그인 세션으로 자동 실행합니다.';
     }

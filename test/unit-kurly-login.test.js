@@ -64,6 +64,25 @@ test('아이디·비밀번호 오류 응답: 컬리가 준 메시지를 그대�
   assert.match(result.message, /HTTP 401 · M001/);
 });
 
+test('보안 서비스(reCAPTCHA) 동반 거부(S001)에는 봇 판단 가능성을 함께 알린다', () => {
+  // 2026-11-19 실제 확인: 헤드리스 브라우저에서 auth.kurly.com/v2/login 이 돌려준 응답
+  const result = summarizeLoginFailure({
+    responses: [
+      {
+        url: 'https://auth.kurly.com/v2/login',
+        status: 422,
+        errorCode: 'S001',
+        message: '아이디 또는 비밀번호를 확인해주세요.',
+        captchaRequired: true,
+      },
+    ],
+  });
+  assert.equal(result.code, 'LOGIN_REJECTED');
+  assert.equal(result.decisive, true);
+  assert.match(result.message, /HTTP 422 · S001/);
+  assert.match(result.message, /reCAPTCHA/);
+});
+
 test('응답은 2xx 뿐이고 모달만 있을 때: 모달 문구를 보여준다', () => {
   const result = summarizeLoginFailure({
     responses: [{ url: 'https://auth.kurly.com/v2/login', status: 200 }],
