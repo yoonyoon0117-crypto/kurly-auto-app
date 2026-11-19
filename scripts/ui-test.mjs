@@ -16,7 +16,10 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const WORKSPACE = path.resolve(ROOT, '..');
-const SHOT_DIR = path.join(WORKSPACE, 'downloads', 'kurly-auto-app-screens');
+// 기본은 작업 폴더의 downloads/…, SHOT_DIR 로 바꿀 수 있습니다.
+const SHOT_DIR = process.env.SHOT_DIR
+  ? path.resolve(process.env.SHOT_DIR)
+  : path.join(WORKSPACE, 'downloads', 'kurly-auto-app-screens');
 
 const BROWSERS = path.join(WORKSPACE, '.tools', 'pw-browsers');
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync(BROWSERS)) {

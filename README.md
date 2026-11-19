@@ -13,11 +13,23 @@
 
 ---
 
+## 화면 미리보기 (아이폰 390×844)
+
+<img src="docs/screens/03-plan-starter-items-390x844.png" width="250" alt="계획 탭 — 기본 4개 상품과 다음 정기 실행">
+<img src="docs/screens/09-run-tab-390x844.png" width="250" alt="실행 탭 — 지금 담기·미리보기·실행 기록">
+<img src="docs/screens/10-settings-390x844.png" width="250" alt="설정 탭 — 정기 실행과 컬리 계정 연결">
+
+왼쪽부터 **계획 탭**(기본 4개 상품·예상 금액·다음 정기 실행) · **실행 탭**(지금 담기·미리보기·실행 기록) ·
+**설정 탭**(주기·요일·시각, 컬리 계정 연결). 모두 테스트 계정(`앰버`)으로 찍은 화면입니다.
+
+---
+
 ## 1. 이번 버전에서 달라진 점
 
-기존 `kurly-auto-cart/`(한 사람·내 컴퓨터용)는 **그대로 두었고**, 이 폴더는 새로 만든 멀티유저 버전입니다.
+이 저장소는 초대받은 지인들이 **각자 계정으로 쓰는 멀티유저 PWA(v2)** 입니다.
+처음에 만든 1인용 버전(내 컴퓨터에서만 돌던 스크립트)과 비교하면 다음과 같습니다.
 
-| | 기존 `kurly-auto-cart` | 새 `kurly-auto-app` |
+| | 1인용 버전(초기) | 이 버전(`kurly-auto-app` v2) |
 |---|---|---|
 | 사용자 | 1명 (내 컴퓨터) | 여러 명 (초대 코드 + 닉네임/비밀번호) |
 | 데이터 | `config/cart-plan.json` 한 파일 | `DATA_DIR/users/{userId}.json` 사용자별 완전 분리 |
@@ -342,13 +354,16 @@ kurly-auto-app/
 │   ├── index.html · app.js · styles.css
 │   ├── manifest.json · sw.js
 │   └── icons/ (192·512·maskable·apple-touch)
-├── test/                    # node:test (49개)
+├── test/                    # node:test (48개)
 ├── scripts/
 │   ├── make-icons.mjs       # 아이콘 PNG 생성기 (외부 라이브러리 없음)
 │   ├── ui-test.mjs          # iPhone 390×844 Playwright 점검·스크린샷
 │   └── check-kurly-selectors.mjs  # 컬리 화면 선택자 진단(수동, 비회원 장바구니)
+├── docs/screens/            # README 에 쓰는 화면 캡처 (아이폰 390×844)
+├── .github/workflows/
+│   └── test.yml             # GitHub Actions — push·PR 마다 단위 테스트
 ├── Dockerfile · docker-compose.yml · .dockerignore
-├── .env.example · .gitignore
+├── .env.example · .gitignore · LICENSE
 └── package.json
 ```
 
@@ -409,7 +424,7 @@ data/
 
 ## 14. 테스트 · 검증 결과 (2026-11-19, 실제 실행)
 
-### `npm test` — 49개 통과 (실패 0, 건너뜀 0)
+### `npm test` — 48개 통과 (실패 0, 건너뜀 0)
 
 | 영역 | 확인한 내용 |
 |---|---|
@@ -432,7 +447,20 @@ data/
 가입(초대 코드) → 기본 4개 상품(수량 2개씩 자동) → 실제 컬리 검색 → 계획 추가 → 저장 →
 **새로고침 후 5개 유지** → 미리보기 → 설정 기본값 → 서비스 워커 활성화 → **콘솔 오류 0건**.
 
-스크린샷: `downloads/kurly-auto-app-screens/` (01~11, `ui-test-report.json`)
+스크린샷: README 에 쓰는 3장은 `docs/screens/` 에 있습니다. `npm run test:ui` 를 돌리면 단계별 01~11 캡처와
+`ui-test-report.json` 이 생깁니다(기본 `../downloads/kurly-auto-app-screens/`, `SHOT_DIR=/원하는/경로` 로 바꿀 수 있음).
+
+### GitHub Actions — push·PR 마다 자동 검사
+
+`.github/workflows/test.yml` 이 Node 20 에서 `npm ci` 후 두 job 을 돌립니다.
+
+| job | 내용 | CI 통과 조건 |
+|---|---|---|
+| 단위·API 테스트 | `npm run test:unit` — 45개, 실제 컬리 접속 없음 | **필수** (실패하면 빨간불) |
+| 실제 컬리 연결 점검 | `npm run test:live` — 3개, 실제 컬리 검색·상품 상세 | 정보용 — 컬리 쪽 차단·점검으로 실패해도 CI 는 통과하되 로그에 그대로 남음 |
+
+> 실제 컬리 점검은 컬리 서버 사정(해외 IP 차단·점검)에 좌우되므로 필수 조건에서 빼두었습니다.
+> 대신 `npm test` 는 로컬에서 두 묶음을 모두 돌립니다(48개).
 
 ### 아직 확인하지 못한 것 (정직하게)
 
@@ -494,6 +522,8 @@ data/
 ---
 
 ## 17. 라이선스·면책
+
+**MIT License** (`LICENSE`) — Copyright (c) 2026 yoonyoon0117-crypto. 고치고, 나눠주고, 상업적으로 써도 됩니다.
 
 개인용으로 만든 도구입니다. 컬리와 무관하며, 사용으로 인한 계정·주문·데이터 문제의 책임은 사용자에게 있습니다.
 **주문·결제 기능은 없고, 앞으로도 넣지 않는 것을 권합니다.**

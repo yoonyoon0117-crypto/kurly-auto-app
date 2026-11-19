@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
-    "test": "node --test --test-concurrency=1 test/",
+    "test": "node --test --test-concurrency=1 $(find test -maxdepth 1 -name '*.test.js' | sort)",
+    "test:unit": "node --test --test-concurrency=1 $(find test -maxdepth 1 -name '*.test.js' ! -name 'live-*.test.js' | sort)",
+    "test:live": "node --test --test-concurrency=1 test/live-kurly.test.js",
     "test:ui": "node scripts/ui-test.mjs",
     "icons": "node scripts/make-icons.mjs"
   },
