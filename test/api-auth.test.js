@@ -44,7 +44,7 @@ test('회원가입: 잘못된 초대 코드·형식 오류는 거부', async () 
   assert.equal(badNick.status, 400);
   assert.match(badNick.body.error, /닉네임/);
 
-  const spaceNick = await register(server.baseUrl, { nickname: '서 윤', password: 'password123' });
+  const spaceNick = await register(server.baseUrl, { nickname: '앰 버', password: 'password123' });
   assert.equal(spaceNick.status, 400);
 });
 
