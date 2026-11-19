@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>컬리 정기 장바구니</title>
+<meta name="description" content="2주에 한 번, 먹을 만큼만 마켓컬리 장바구니에 담아두는 앱" />
+<meta name="theme-color" content="#5F0080" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="컬리 장바구니" />
+<meta name="format-detection" content="telephone=no" />
+<link rel="manifest" href="/manifest.json" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<!-- ────────── 처음 불러오는 동안 ────────── -->
+<div class="boot" id="boot">
+  <div class="boot-icon">🛒</div>
+  <p>불러오는 중…</p>
+</div>
+
+<!-- ────────── 로그인 / 회원가입 ────────── -->
+<section class="auth" id="authView" hidden>
+  <div class="auth-brand">
+    <img src="/icons/icon-192.png" alt="" width="72" height="72" />
+    <h1>컬리 정기 장바구니</h1>
+    <p>2주에 한 번, 먹을 만큼만<br />마켓컬리 장바구니에 담아둘게요.</p>
+  </div>
+
+  <form class="card auth-form" id="authForm" autocomplete="on" novalidate>
+    <div class="segmented" id="authMode" role="tablist" aria-label="로그인 또는 회원가입">
+      <button type="button" data-mode="login" class="active" role="tab" aria-selected="true">로그인</button>
+      <button type="button" data-mode="register" role="tab" aria-selected="false">회원가입</button>
+    </div>
+
+    <label class="field">
+      <span>닉네임</span>
+      <input id="authNickname" name="nickname" type="text" inputmode="text" autocomplete="username" placeholder="예) 앰버" maxlength="20" required />
+    </label>
+
+    <label class="field">
+      <span>비밀번호</span>
+      <input id="authPassword" name="password" type="password" autocomplete="current-password" placeholder="6자 이상" maxlength="200" required />
+    </label>
+
+    <label class="field" id="inviteField" hidden>
+      <span>초대 코드</span>
+      <input id="authInvite" name="inviteCode" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="초대받은 코드를 입력하세요" />
+    </label>
+
+    <label class="check" id="starterField" hidden>
+      <input type="checkbox" id="authStarter" checked />
+      <span>기본 4개 상품(계란·사과·오이·닭다리)으로 시작하기</span>
+    </label>
+
+    <p class="form-error" id="authError" hidden></p>
+    <button class="btn btn-primary btn-block" id="authSubmit" type="submit">로그인</button>
+    <p class="auth-note">이 앱은 초대받은 분만 쓸 수 있어요. 담기만 하고 <b>결제는 하지 않습니다.</b></p>
+  </form>
+</section>
+
+<!-- ────────── 앱 ────────── -->
+<div class="app" id="appView" hidden>
+  <header class="appbar">
+    <div class="appbar-title">
+      <img src="/icons/icon-192.png" alt="" width="26" height="26" />
+      <span>컬리 정기 장바구니</span>
+    </div>
+    <button class="icon-btn" id="refreshBtn" type="button" aria-label="새로고침" title="새로고침">↻</button>
+  </header>
+
+  <!-- 설치 안내 (iOS Safari) -->
+  <div class="install-hint" id="installHint" hidden>
+    <span>아이폰에서 <b>공유 → 홈 화면에 추가</b> 하면 앱처럼 쓸 수 있어요.</span>
+    <button type="button" class="icon-btn" id="installHintClose" aria-label="닫기">✕</button>
+  </div>
+
+  <main class="screen" id="screen-plan" data-screen="plan">
+    <section class="card next-card">
+      <p class="eyebrow">다음 정기 실행</p>
+      <strong class="next-label" id="nextRunLabel">—</strong>
+      <p class="muted" id="scheduleLabel">2주마다 금요일 21:00 (KST)</p>
+      <div class="stat-row">
+        <div class="stat"><span>담을 상품</span><b id="statItems">0개</b></div>
+        <div class="stat"><span>예상 금액</span><b id="statTotal">0원</b></div>
+        <div class="stat"><span>정기 실행</span><b id="statEnabled">켜짐</b></div>
+      </div>
+    </section>
+
+    <button class="btn btn-primary btn-block btn-add" id="openSearchBtn" type="button">
+      <span aria-hidden="true">＋</span> 상품 검색해서 담기
+    </button>
+
+    <div class="plan-list" id="planList"></div>
+
+    <div class="empty card" id="planEmpty" hidden>
+      <p class="empty-emoji" aria-hidden="true">🧺</p>
+      <p>아직 담은 상품이 없어요.</p>
+      <p class="muted">2주 동안 먹는 양을 적어두면, 그때마다 알아서 장바구니에 담아드려요.</p>
+      <button class="btn btn-soft btn-block" id="loadStarterBtn" type="button">기본 4개 상품 불러오기</button>
+    </div>
+  </main>
+
+  <main class="screen" id="screen-run" data-screen="run" hidden>
+    <section class="card">
+      <div class="row-between">
+        <h2 class="card-title">컬리 계정</h2>
+        <span class="badge" id="kurlyBadge">미연결</span>
+      </div>
+      <p class="muted" id="kurlyMeta">계정을 연결하면 정해진 날 자동으로 담아드려요.</p>
+      <button class="btn btn-soft btn-block" id="gotoConnectBtn" type="button">컬리 계정 연결하기</button>
+    </section>
+
+    <section class="card run-card">
+      <button class="btn btn-primary btn-block btn-lg" id="runNowBtn" type="button">지금 담기</button>
+      <p class="muted center" id="runHint">정기 실행일을 기다리지 않고 바로 담아볼 수 있어요.</p>
+      <div class="progress" id="runProgress" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="runProgressText">실행 중…</span>
+      </div>
+      <button class="btn btn-ghost btn-block" id="previewBtn" type="button">미리보기 · 무엇을 몇 개 담을까?</button>
+    </section>
+
+    <section class="card">
+      <div class="row-between">
+        <h2 class="card-title">실행 기록</h2>
+        <span class="muted small" id="runStats"></span>
+      </div>
+      <div class="history" id="runHistory"></div>
+      <p class="empty-line" id="runEmpty">아직 실행 기록이 없어요.</p>
+    </section>
+  </main>
+
+  <main class="screen" id="screen-settings" data-screen="settings" hidden>
+    <section class="card">
+      <h2 class="card-title">내 계정</h2>
+      <p class="me-line"><b id="meNickname">—</b><span class="muted small" id="meSince"></span></p>
+      <button class="btn btn-ghost btn-block" id="logoutBtn" type="button">로그아웃</button>
+    </section>
+
+    <section class="card" id="kurlySection">
+      <div class="row-between">
+        <h2 class="card-title">컬리 계정 연결</h2>
+        <span class="badge" id="kurlyBadge2">미연결</span>
+      </div>
+      <p class="muted small" id="kurlyStateText">아이디·비밀번호로 한 번만 연결하면, 이후에는 암호화된 로그인 세션으로 자동 실행합니다.</p>
+      <form id="kurlyForm" class="stack" autocomplete="on">
+        <label class="field">
+          <span>컬리 아이디</span>
+          <input id="kurlyId" type="text" autocomplete="username" placeholder="컬리 아이디" />
+        </label>
+        <label class="field">
+          <span>컬리 비밀번호</span>
+          <input id="kurlyPw" type="password" autocomplete="current-password" placeholder="비밀번호" />
+        </label>
+        <p class="hint">🔒 비밀번호는 저장하지 않습니다. 로그인 성공 후 받은 세션만 AES-256-GCM 으로 암호화해 보관해요.</p>
+        <button class="btn btn-primary btn-block" id="kurlyConnectBtn" type="submit">연결하기</button>
+      </form>
+      <div class="row-gap">
+        <button class="btn btn-ghost" id="kurlyVerifyBtn" type="button">연결 상태 확인</button>
+        <button class="btn btn-danger-ghost" id="kurlyDisconnectBtn" type="button">연결 해제</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">정기 실행</h2>
+      <label class="switch-row">
+        <span>정기 실행 사용</span>
+        <span class="switch"><input type="checkbox" id="scheduleEnabled" /><i></i></span>
+      </label>
+      <div class="grid2">
+        <label class="field">
+          <span>요일</span>
+          <select id="scheduleWeekday">
+            <option value="0">일요일</option><option value="1">월요일</option><option value="2">화요일</option>
+            <option value="3">수요일</option><option value="4">목요일</option><option value="5">금요일</option>
+            <option value="6">토요일</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>시각 (KST)</span>
+          <input type="time" id="scheduleTime" value="21:00" />
+        </label>
+        <label class="field">
+          <span>주기</span>
+          <select id="scheduleInterval">
+            <option value="1">1주마다</option><option value="2">2주마다</option>
+            <option value="3">3주마다</option><option value="4">4주마다</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>기준일(첫 실행일)</span>
+          <input type="date" id="scheduleAnchor" />
+        </label>
+      </div>
+      <p class="hint">기준일부터 정확히 주기(기본 14일) 간격으로 실행돼요. 서버가 잠깐 꺼져 있었다면 실행 시각 후 6시간 안에 한 번 따라잡습니다.</p>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">알림</h2>
+      <label class="field">
+        <span>웹훅 URL (선택)</span>
+        <input type="url" id="notifyWebhook" placeholder="Slack · Discord · ntfy 주소" inputmode="url" />
+      </label>
+      <label class="field">
+        <span>웹훅 종류</span>
+        <select id="notifyWebhookType">
+          <option value="auto">자동 판별</option>
+          <option value="slack">Slack</option>
+          <option value="discord">Discord</option>
+          <option value="ntfy">ntfy</option>
+          <option value="generic">일반 JSON</option>
+        </select>
+      </label>
+      <p class="hint">담기 결과만 보냅니다. 비워두면 앱 안의 실행 기록으로만 확인해요.</p>
+    </section>
+
+    <section class="card about">
+      <h2 class="card-title">앱 정보</h2>
+      <p class="muted small">버전 <span id="appVersion">—</span> · 담기만 하고 결제는 하지 않습니다.</p>
+      <p class="muted small">아이폰: Safari 공유 → <b>홈 화면에 추가</b></p>
+    </section>
+  </main>
+
+  <div class="savebar" id="saveBar" hidden>
+    <span class="save-hint" id="saveHint">저장하지 않은 변경이 있어요</span>
+    <button class="btn btn-primary" id="saveBtn" type="button">저장</button>
+  </div>
+
+  <nav class="tabbar" aria-label="주요 화면">
+    <button type="button" data-tab="plan" class="active" aria-current="page"><span aria-hidden="true">🧺</span>계획</button>
+    <button type="button" data-tab="run"><span aria-hidden="true">🛒</span>실행</button>
+    <button type="button" data-tab="settings"><span aria-hidden="true">⚙️</span>설정</button>
+  </nav>
+</div>
+
+<!-- ────────── 상품 검색 (전체 화면 시트) ────────── -->
+<div class="sheet" id="searchSheet" hidden>
+  <header class="sheet-head">
+    <button class="icon-btn" id="closeSearchBtn" type="button" aria-label="닫기">←</button>
+    <form class="search-form" id="searchForm" autocomplete="off">
+      <input type="search" id="searchInput" placeholder="컬리 상품 검색 (예: 유정란, 사과)" aria-label="상품 검색어" enterkeyhint="search" />
+      <button class="btn btn-primary" type="submit" id="searchBtn">검색</button>
+    </form>
+  </header>
+  <div class="sheet-body">
+    <div class="quick-keywords" id="quickKeywords">
+      <button type="button" class="chip" data-q="유정란 15구">유정란 15구</button>
+      <button type="button" class="chip" data-q="사과">사과</button>
+      <button type="button" class="chip" data-q="오이">오이</button>
+      <button type="button" class="chip" data-q="닭다리">닭다리</button>
+      <button type="button" class="chip" data-q="우유">우유</button>
+      <button type="button" class="chip" data-q="양파">양파</button>
+    </div>
+    <p class="search-status" id="searchStatus" hidden></p>
+    <div class="product-list" id="searchResults"></div>
+    <button class="btn btn-ghost btn-block" id="searchMore" type="button" hidden>결과 더 보기</button>
+  </div>
+</div>
+
+<!-- ────────── 상품 추가 모달 ────────── -->
+<div class="modal-backdrop" id="addModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+    <div class="modal-head">
+      <h3 id="addModalTitle">계획에 추가</h3>
+      <button class="icon-btn" id="addModalClose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <div class="modal-body" id="addModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="addModalCancel" type="button">취소</button>
+      <button class="btn btn-primary" id="addModalConfirm" type="button">계획에 추가</button>
+    </div>
+  </div>
+</div>
+
+<!-- ────────── 미리보기 모달 ────────── -->
+<div class="modal-backdrop" id="previewModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <div class="modal-head">
+      <h3 id="previewTitle">미리보기</h3>
+      <button class="icon-btn" id="previewClose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <div class="modal-body" id="previewBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-primary btn-block" id="previewOk" type="button">확인</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

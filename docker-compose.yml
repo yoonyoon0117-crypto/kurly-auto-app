@@ -1,0 +1,27 @@
+services:
+  kurly-auto-app:
+    build: .
+    image: kurly-auto-app:latest
+    container_name: kurly-auto-app
+    restart: unless-stopped
+    ports:
+      # 바깥 포트:안쪽 포트 (안쪽은 항상 3000)
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
+    volumes:
+      # 사용자 데이터(계획·실행 기록·암호화된 컬리 세션)는 여기에 남습니다.
+      - ./data:/data
+    # Chromium 은 /dev/shm 을 많이 씁니다. 작은 서버에서 OOM/크래시 방지.
+    shm_size: "1gb"
+    # 실행 중인 담기 작업을 중간에 끊지 않고 정리할 시간
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
