@@ -694,8 +694,19 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
             },
             { logger }
           );
-          logger.info(`푸시 테스트: ${user.nickname} → ${result.sent}건 성공 / ${result.failed}건 실패 / ${result.pruned}건 정리`);
-          return sendJson(res, 200, { ok: true, sent: result.sent, failed: result.failed, pruned: result.pruned, count: result.total - result.pruned });
+          const lastError = result.lastError || result.error || null;
+          logger.info(
+            `푸시 테스트: ${user.nickname} → ${result.sent}건 성공 / ${result.failed}건 실패 / ${result.pruned}건 정리` +
+              (lastError ? ` (마지막 오류: ${lastError})` : '')
+          );
+          return sendJson(res, 200, {
+            ok: true,
+            sent: result.sent,
+            failed: result.failed,
+            pruned: result.pruned,
+            count: result.total - result.pruned,
+            lastError,
+          });
         }
 
         if (pathname === '/api/cart/preview' && method === 'GET') {

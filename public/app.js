@@ -166,6 +166,8 @@ function enterApp(user, plan) {
   maybeShowInstallHint();
   refreshRuns();
   pollStatus().catch(() => {});
+  // 설정 탭에 들어가기 전에도 푸시 상태를 미리 채워 둡니다(아이폰에서 '확인 중…' 으로 남지 않도록).
+  refreshPushUI().catch(() => {});
 }
 
 function setTab(tab, { push = true } = {}) {
@@ -1196,7 +1198,7 @@ function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   navigator.serviceWorker
-    .register('/sw.js')
+    .register('/sw.js', { updateViaCache: 'none' })
     .then((reg) => {
       pushState.registration = reg;
     })
@@ -1254,9 +1256,34 @@ function urlBase64ToUint8Array(base64String) {
 async function pushRegistration() {
   if (!('serviceWorker' in navigator)) return null;
   if (pushState.registration && pushState.registration.active) return pushState.registration;
-  const reg = await navigator.serviceWorker.ready;
-  pushState.registration = reg;
-  return reg;
+
+  // 이미 활성화된 서비스 워커가 있으면 바로 씁니다.
+  // (아이폰 홈 화면 앱에서는 ready 가 끝없이 기다리는 경우가 있어 먼저 확인합니다.)
+  try {
+    const existing = await navigator.serviceWorker.getRegistration();
+    if (existing && existing.active) {
+      pushState.registration = existing;
+      return existing;
+    }
+  } catch {
+    /* getRegistration 을 못 쓰는 환경은 아래 ready 로 넘어갑니다 */
+  }
+
+  // ready 가 늦어지면 화면이 '확인 중…' 에 멈추지 않도록 3.5초만 기다립니다.
+  const ready = navigator.serviceWorker.ready.catch(() => null);
+  const reg = await Promise.race([
+    ready,
+    new Promise((resolve) => setTimeout(() => resolve(null), 3500)),
+  ]);
+  if (reg) {
+    pushState.registration = reg;
+    return reg;
+  }
+  // 늦게라도 준비되면 다음 호출에서 바로 쓸 수 있게 기억해 둡니다.
+  ready.then((late) => {
+    if (late && late.active && !pushState.registration) pushState.registration = late;
+  });
+  return null;
 }
 
 function deviceLabel() {
@@ -1308,6 +1335,9 @@ async function refreshPushUI() {
     renderPushUI();
     return;
   }
+  // 서비스 워커 준비를 기다리기 전에 현재 상태로 먼저 그립니다.
+  // (아이폰에서 ready 가 늦어도 '확인 중…' 에 멈추지 않게)
+  renderPushUI();
   try {
     const reg = await pushRegistration();
     pushState.subscription = reg ? await reg.pushManager.getSubscription() : null;
@@ -1401,9 +1431,11 @@ async function sendTestPush() {
       });
       result = await send();
     }
+    // 푸시 서버가 거부한 이유(HTTP 상태·애플 응답)를 숨기지 않고 보여 줍니다.
+    const detail = result.lastError ? ` — ${String(result.lastError).slice(0, 160)}` : '';
     if (result.sent > 0) toast('테스트 알림을 보냈어요. 잠시 뒤 알림이 오는지 확인해 주세요.');
-    else if (result.pruned > 0) toast('만료된 구독을 정리했어요. 푸시 알림을 껐다가 다시 켜 주세요.', true);
-    else toast('알림을 보내지 못했어요. 푸시를 껐다가 다시 켜 주세요.', true);
+    else if (result.pruned > 0) toast(`만료된 구독을 정리했어요. 푸시 알림을 껐다가 다시 켜 주세요.${detail}`, true);
+    else toast(`알림을 보내지 못했어요. 푸시를 껐다가 다시 켜 주세요.${detail}`, true);
   } catch (err) {
     toast(err.message, true);
   } finally {

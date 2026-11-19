@@ -143,6 +143,7 @@ test('POST /api/push/test — 구독한 기기로 제목·본문·아이콘 경�
   assert.equal(res.body.ok, true);
   assert.equal(res.body.sent, 1);
   assert.equal(res.body.count, 1);
+  assert.equal(res.body.lastError, null, '성공하면 오류 사유는 없습니다.');
 
   assert.equal(sentCalls.length, 1);
   assert.equal(sentCalls[0].subscription.endpoint, sub.endpoint);
@@ -198,13 +199,15 @@ test('전송 실패(500)는 구독을 지우지 않고 failed 로 센다', async
   await request(server.baseUrl, '/api/push/subscribe', { method: 'POST', cookie: me.cookie, body: sub });
 
   stubSend(() => {
-    throw Object.assign(new Error('push service unavailable'), { statusCode: 503 });
+    throw Object.assign(new Error('push service unavailable'), { statusCode: 503, body: 'try later' });
   });
   const res = await request(server.baseUrl, '/api/push/test', { method: 'POST', cookie: me.cookie, body: {} });
   assert.equal(res.status, 200);
   assert.equal(res.body.sent, 0);
   assert.equal(res.body.failed, 1);
   assert.equal(res.body.pruned, 0);
+  assert.match(res.body.lastError, /HTTP 503/);
+  assert.match(res.body.lastError, /try later/);
   assert.equal(savedSubscriptions(me.body.user.userId).length, 1, '일시 오류로 구독을 지우면 안 됩니다.');
 });
 
@@ -243,7 +246,10 @@ test('POST /api/push/unsubscribe — 그 endpoint 만 지운다', async () => {
 test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리하고 설정에 푸시 UI 가 있다', async () => {
   const sw = await request(server.baseUrl, '/sw.js');
   assert.equal(sw.status, 200);
-  assert.match(sw.text, /kurly-v2\.1\.0/);
+  assert.match(sw.text, /kurly-v2\.1\.1/);
+  // 새로 배포한 HTML/JS/CSS 가 홈 화면 앱을 다시 열 때 바로 반영되도록 네트워크 우선이어야 합니다.
+  assert.match(sw.text, /request\.destination === 'script'/);
+  assert.match(sw.text, /cache: 'no-store'/);
   assert.match(sw.text, /addEventListener\('push'/);
   assert.match(sw.text, /self\.registration\.showNotification/);
   assert.match(sw.text, /addEventListener\('notificationclick'/);
@@ -260,4 +266,8 @@ test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리�
   assert.match(app.text, /pushManager\.subscribe/);
   assert.match(app.text, /\/api\/push\/subscribe/);
   assert.match(app.text, /serviceWorker\.ready/);
+  // 아이폰에서 ready 가 늦어도 '확인 중…' 에 멈추지 않아야 합니다.
+  assert.match(app.text, /serviceWorker\.getRegistration/);
+  assert.match(app.text, /Promise\.race/);
+  assert.match(app.text, /3500/);
 });
