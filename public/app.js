@@ -186,7 +186,10 @@ function setTab(tab, { push = true } = {}) {
     renderRun();
     pollStatus().catch(() => {});
   }
-  if (next === 'settings') renderKurlyCard();
+  if (next === 'settings') {
+    renderKurlyCard();
+    refreshPushUI();
+  }
 }
 
 /* ─────────────── 계획 ─────────────── */
@@ -1192,7 +1195,220 @@ async function logout() {
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker
+    .register('/sw.js')
+    .then((reg) => {
+      pushState.registration = reg;
+    })
+    .catch(() => {});
+}
+
+/* ─────────────── 웹 푸시 (아이폰 홈 화면 앱) ─────────────── */
+
+const pushState = { registration: null, subscription: null, busy: false };
+
+function isStandaloneMode() {
+  return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+}
+
+function isIOSDevice() {
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/** 이 브라우저·화면에서 푸시를 켤 수 있는지, 안 되면 그 이유 */
+function pushSupport() {
+  const secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!secure) return { ok: false, reason: '푸시 알림은 https 주소에서만 동작해요.' };
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    return {
+      ok: false,
+      reason: isIOSDevice()
+        ? '아이폰은 iOS 16.4 이상에서 홈 화면에 추가한 앱에서만 푸시를 받을 수 있어요. Safari 공유(⬆️) → 홈 화면에 추가 후, 그 앱에서 켜 주세요.'
+        : '이 브라우저는 푸시 알림을 지원하지 않아요.',
+    };
+  }
+  if (isIOSDevice() && !isStandaloneMode()) {
+    return { ok: false, reason: '아이폰은 Safari 탭에서는 알림이 오지 않아요. 공유(⬆️) → 홈 화면에 추가로 연 앱에서 켜 주세요.' };
+  }
+  if (Notification.permission === 'denied') {
+    return {
+      ok: false,
+      reason: isIOSDevice()
+        ? '알림이 차단되어 있어요. 아이폰 설정 > 알림 > 컬리 장바구니에서 허용으로 바꿔 주세요.'
+        : '브라우저 설정에서 이 사이트의 알림을 허용해 주세요.',
+    };
+  }
+  return { ok: true, reason: '' };
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = String(base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function pushRegistration() {
+  if (!('serviceWorker' in navigator)) return null;
+  if (pushState.registration && pushState.registration.active) return pushState.registration;
+  const reg = await navigator.serviceWorker.ready;
+  pushState.registration = reg;
+  return reg;
+}
+
+function deviceLabel() {
+  if (isIOSDevice()) return isStandaloneMode() ? '아이폰 · 홈 화면 앱' : '아이폰 · Safari';
+  const ua = navigator.userAgent;
+  if (/Android/.test(ua)) return '안드로이드 · 브라우저';
+  if (/Macintosh/.test(ua)) return '맥 · 브라우저';
+  if (/Windows/.test(ua)) return '윈도우 · 브라우저';
+  return '이 기기';
+}
+
+function renderPushUI() {
+  const toggle = $('#pushToggle');
+  const testBtn = $('#pushTestBtn');
+  const stateText = $('#pushStateText');
+  const hint = $('#pushHint');
+  if (!toggle || !testBtn || !stateText || !hint) return;
+
+  const support = pushSupport();
+  const subscribed = Boolean(pushState.subscription) && support.ok && Notification.permission === 'granted';
+
+  if (!support.ok) {
+    toggle.checked = false;
+    toggle.disabled = true;
+    testBtn.disabled = true;
+    stateText.textContent = '이 기기에서는 지금 켤 수 없어요.';
+    hint.hidden = false;
+    hint.textContent = support.reason;
+    return;
+  }
+
+  toggle.disabled = pushState.busy;
+  toggle.checked = subscribed;
+  testBtn.disabled = pushState.busy || !subscribed;
+  stateText.textContent = subscribed
+    ? '켜짐 — 담기 결과를 이 기기 알림으로 보내드려요.'
+    : '꺼짐 — 켜면 담기 결과를 잠금화면 알림으로 알려드려요.';
+  hint.hidden = false;
+  hint.textContent = isIOSDevice()
+    ? '아이폰은 홈 화면에 추가한 앱에서만 알림이 와요. 알림이 안 보이면 설정 > 알림에서 이 앱이 허용되어 있는지 확인해 주세요.'
+    : '브라우저 알림 권한을 허용해야 알림이 와요.';
+}
+
+async function refreshPushUI() {
+  if (!$('#pushToggle')) return;
+  const support = pushSupport();
+  if (!support.ok) {
+    pushState.subscription = null;
+    renderPushUI();
+    return;
+  }
+  try {
+    const reg = await pushRegistration();
+    pushState.subscription = reg ? await reg.pushManager.getSubscription() : null;
+  } catch {
+    pushState.subscription = null;
+  }
+  renderPushUI();
+}
+
+async function enablePush() {
+  const support = pushSupport();
+  if (!support.ok) {
+    renderPushUI();
+    toast(support.reason, true);
+    return;
+  }
+  pushState.busy = true;
+  renderPushUI();
+  try {
+    const permission =
+      Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (permission !== 'granted') {
+      toast('알림을 허용해야 푸시를 받을 수 있어요. 아이폰 설정 > 알림에서 허용할 수 있어요.', true);
+      return;
+    }
+    const reg = await pushRegistration();
+    if (!reg) throw new Error('서비스 워커를 준비하지 못했어요. 앱을 다시 열어 주세요.');
+    const data = await api('/api/push/vapid-key');
+    if (!data.publicKey) throw new Error('서버의 푸시 키를 받지 못했어요.');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(data.publicKey),
+      });
+    }
+    const json = sub.toJSON();
+    await api('/api/push/subscribe', {
+      method: 'POST',
+      body: { endpoint: json.endpoint, keys: json.keys, deviceLabel: deviceLabel() },
+    });
+    pushState.subscription = sub;
+    toast('이 기기 푸시 알림을 켰어요. 테스트 알림으로 확인해 보세요.');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    pushState.busy = false;
+    await refreshPushUI();
+  }
+}
+
+async function disablePush() {
+  pushState.busy = true;
+  renderPushUI();
+  try {
+    const reg = await pushRegistration();
+    const sub = pushState.subscription || (reg ? await reg.pushManager.getSubscription() : null);
+    if (sub) {
+      try {
+        await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+      } catch {
+        /* 서버 기록이 없어도 기기 구독은 해지합니다 */
+      }
+      await sub.unsubscribe().catch(() => {});
+    }
+    pushState.subscription = null;
+    toast('이 기기 푸시 알림을 껐어요.');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    pushState.busy = false;
+    await refreshPushUI();
+  }
+}
+
+async function sendTestPush() {
+  const btn = $('#pushTestBtn');
+  btn.disabled = true;
+  const send = () => api('/api/push/test', { method: 'POST', body: {} });
+  try {
+    let result;
+    try {
+      result = await send();
+    } catch (err) {
+      // 서버 쪽 기록이 사라졌다면(볼륨 초기화 등) 이 기기 구독을 다시 등록하고 한 번 더 시도합니다.
+      if (err.status !== 400 || !pushState.subscription) throw err;
+      const json = pushState.subscription.toJSON();
+      await api('/api/push/subscribe', {
+        method: 'POST',
+        body: { endpoint: json.endpoint, keys: json.keys, deviceLabel: deviceLabel() },
+      });
+      result = await send();
+    }
+    if (result.sent > 0) toast('테스트 알림을 보냈어요. 잠시 뒤 알림이 오는지 확인해 주세요.');
+    else if (result.pruned > 0) toast('만료된 구독을 정리했어요. 푸시 알림을 껐다가 다시 켜 주세요.', true);
+    else toast('알림을 보내지 못했어요. 푸시를 껐다가 다시 켜 주세요.', true);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    await refreshPushUI();
+  }
 }
 
 function maybeShowInstallHint() {
@@ -1254,6 +1470,11 @@ function bindEvents() {
   });
   $('#kurlyVerifyBtn').addEventListener('click', verifyKurly);
   $('#kurlyDisconnectBtn').addEventListener('click', disconnectKurly);
+  $('#pushToggle').addEventListener('change', (e) => {
+    if (e.target.checked) enablePush();
+    else disablePush();
+  });
+  $('#pushTestBtn').addEventListener('click', sendTestPush);
   $('#logoutBtn').addEventListener('click', logout);
   $('#gotoConnectBtn').addEventListener('click', () => setTab('settings'));
   $('#installHintClose').addEventListener('click', () => {

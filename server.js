@@ -29,6 +29,7 @@ const { createLogger } = require('./lib/logger');
 const { JobQueue } = require('./lib/queue');
 const { Scheduler } = require('./lib/scheduler');
 const { runCartForUser, previewPlan } = require('./lib/runner');
+const push = require('./lib/webpush');
 const store = require('./lib/store');
 
 const APP_NAME = '컬리 정기 장바구니';
@@ -615,6 +616,86 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
             return u;
           });
           return sendJson(res, 200, { ok: true, kurly: kurlyStatus(updated) });
+        }
+
+        /* ── 이 기기 푸시 알림 (iOS 홈 화면 앱 Web Push) ── */
+        if (pathname === '/api/push/vapid-key' && method === 'GET') {
+          const keys = push.getVapidKeys();
+          return sendJson(res, 200, { ok: true, publicKey: keys.publicKey, source: keys.source });
+        }
+
+        if (pathname === '/api/push/status' && method === 'GET') {
+          const subs = push.listSubscriptions(user.userId);
+          return sendJson(res, 200, {
+            ok: true,
+            count: subs.length,
+            // endpoint 는 기기 식별에만 쓰고 키는 내보내지 않습니다.
+            subscriptions: subs.map((s) => ({
+              endpoint: s.endpoint,
+              deviceLabel: s.deviceLabel || '이 기기',
+              createdAt: s.createdAt || null,
+              lastSeenAt: s.lastSeenAt || null,
+            })),
+          });
+        }
+
+        if (pathname === '/api/push/subscribe' && method === 'POST') {
+          if (!rateLimit(`push-subscribe:${user.userId}`, { max: 30, windowMs: 60 * 60 * 1000 })) {
+            throw new HttpError(429, '구독 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+          }
+          let saved;
+          try {
+            saved = await push.subscribeUser(user.userId, {
+              endpoint: body.endpoint,
+              keys: body.keys,
+              deviceLabel: body.deviceLabel,
+              userAgent: req.headers['user-agent'],
+            });
+          } catch (err) {
+            if (err.status === 400) throw new HttpError(400, err.message);
+            throw err;
+          }
+          logger.info(`푸시 구독 등록: ${user.nickname} · ${saved.subscription?.deviceLabel || '이 기기'} (총 ${saved.count}대)`);
+          return sendJson(res, 200, {
+            ok: true,
+            count: saved.count,
+            subscription: saved.subscription
+              ? { endpoint: saved.subscription.endpoint, deviceLabel: saved.subscription.deviceLabel }
+              : null,
+          });
+        }
+
+        if (pathname === '/api/push/unsubscribe' && method === 'POST') {
+          let result;
+          try {
+            result = await push.unsubscribeUser(user.userId, body.endpoint);
+          } catch (err) {
+            if (err.status === 400) throw new HttpError(400, err.message);
+            throw err;
+          }
+          return sendJson(res, 200, { ok: true, removed: result.removed, count: result.count });
+        }
+
+        if (pathname === '/api/push/test' && method === 'POST') {
+          if (!rateLimit(`push-test:${user.userId}`, { max: 6, windowMs: 10 * 60 * 1000 })) {
+            throw new HttpError(429, '테스트 알림을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요.');
+          }
+          if (!push.listSubscriptions(user.userId).length) {
+            throw new HttpError(400, '이 기기 푸시 알림이 꺼져 있습니다. 먼저 [이 기기 푸시 알림]을 켜 주세요.');
+          }
+          const result = await push.sendToUser(
+            user.userId,
+            {
+              title: '🔔 컬리 정기 장바구니 테스트 알림',
+              body: '이 알림이 보이면 푸시가 제대로 연결된 거예요. 정기 실행이 끝나면 결과를 알려드릴게요.',
+              url: '/#settings',
+              tag: 'kurly-test',
+              data: { test: true },
+            },
+            { logger }
+          );
+          logger.info(`푸시 테스트: ${user.nickname} → ${result.sent}건 성공 / ${result.failed}건 실패 / ${result.pruned}건 정리`);
+          return sendJson(res, 200, { ok: true, sent: result.sent, failed: result.failed, pruned: result.pruned, count: result.total - result.pruned });
         }
 
         if (pathname === '/api/cart/preview' && method === 'GET') {

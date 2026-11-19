@@ -4,8 +4,10 @@
  *  · 설치: 앱 껍데기 미리 받기
  *  · 화면 요청: 네트워크 우선 → 실패하면 캐시된 index.html (오프라인에서도 "앱처럼" 열림)
  *  · /api/*: 항상 네트워크 (장바구니·실행 상태가 낡으면 안 됨)
+ *  · push: 서버가 보낸 웹 푸시를 알림으로 표시 (iOS 16.4+ 홈 화면 앱)
+ *  · notificationclick: 앱을 열거나 이미 열린 창을 앞으로 가져옵니다.
  */
-const VERSION = 'kurly-v2.0.3';
+const VERSION = 'kurly-v2.1.0';
 const SHELL = [
   '/',
   '/index.html',
@@ -39,6 +41,59 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') self.skipWaiting();
 });
+
+/* ─────────────── 웹 푸시 ─────────────── */
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : '' };
+  }
+
+  const title = payload.title || '컬리 정기 장바구니';
+  const options = {
+    body: payload.body || '장바구니 담기 결과가 도착했어요.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: payload.tag || 'kurly-run',
+    renotify: Boolean(payload.tag),
+    data: { url: payload.url || '/#run', ...(payload.data || {}) },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(
+    (event.notification.data && event.notification.data.url) || '/#run',
+    self.location.origin
+  ).href;
+
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const sameApp = windows.find((client) => new URL(client.url).origin === self.location.origin);
+      if (sameApp) {
+        await sameApp.focus();
+        // 실행 탭처럼 알림이 가리키는 화면으로 이동 (지원되는 경우)
+        if ('navigate' in sameApp) {
+          try {
+            await sameApp.navigate(target);
+          } catch {
+            /* 무시 */
+          }
+        }
+        return;
+      }
+      if (self.clients.openWindow) await self.clients.openWindow(target);
+    })()
+  );
+});
+
+/* ─────────────── 캐시 ─────────────── */
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;

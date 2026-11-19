@@ -265,6 +265,19 @@ b { font-weight: 700; }
 .switch input:checked + i { background: var(--purple); }
 .switch input:checked + i::after { transform: translateX(20px); }
 
+/* ── 이 기기 푸시 알림 ── */
+.push-box {
+  margin: 0 0 16px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line, #e6e6ee);
+  border-radius: 14px;
+  background: #faf9fd;
+}
+.push-box .switch-row { padding: 0 0 6px; }
+.push-state { margin: 0; font-size: 13px; font-weight: 600; color: var(--purple); }
+.push-hint { margin: 6px 0 12px; }
+.push-box .btn { margin-top: 2px; }
+
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* ────────── 세션 직접 가져오기 (접이식) ────────── */

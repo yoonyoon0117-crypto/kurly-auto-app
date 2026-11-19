@@ -256,6 +256,17 @@
 
     <section class="card">
       <h2 class="card-title">알림</h2>
+
+      <div class="push-box">
+        <label class="switch-row">
+          <span>이 기기 푸시 알림</span>
+          <span class="switch"><input type="checkbox" id="pushToggle" /><i></i></span>
+        </label>
+        <p class="push-state" id="pushStateText">확인 중…</p>
+        <p class="hint push-hint" id="pushHint" hidden></p>
+        <button class="btn btn-soft btn-block" id="pushTestBtn" type="button" disabled>테스트 알림 보내기</button>
+      </div>
+
       <label class="field">
         <span>웹훅 URL (선택)</span>
         <input type="url" id="notifyWebhook" placeholder="Slack · Discord · ntfy 주소" inputmode="url" />
@@ -270,7 +281,7 @@
           <option value="generic">일반 JSON</option>
         </select>
       </label>
-      <p class="hint">담기 결과만 보냅니다. 비워두면 앱 안의 실행 기록으로만 확인해요.</p>
+      <p class="hint">담기 결과만 보냅니다. 이 기기 푸시를 켜면 아이폰 잠금화면에도 알림이 와요. 둘 다 비워두면 앱 안의 실행 기록으로만 확인해요.</p>
     </section>
 
     <section class="card about">

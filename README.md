@@ -40,7 +40,10 @@
 | 화면 | 데스크톱 웹 | **아이폰 우선 PWA** (홈 화면 추가, 오프라인 껍데기) |
 | 정기 실행 | 내 PC에서 `npm run schedule` | 서버 안 **내장 스케줄러**(60초마다 점검, 동시 실행 1개 큐) |
 | 배포 | 없음 | **Dockerfile + docker-compose** (Railway / Fly.io / Oracle Cloud) |
-| 실행 기록·알림 | 파일 + 데스크톱 알림 | 사용자별 실행 기록 + **Slack/Discord/ntfy 웹훅** |
+| 실행 기록·알림 | 파일 + 데스크톱 알림 | 사용자별 실행 기록 + **아이폰 홈 화면 앱 웹 푸시**(Web Push) + **Slack/Discord/ntfy 웹훅** |
+
+**v2.1.0 (2026-11-19)** — 아이폰 홈 화면 앱 **자체 웹 푸시(Web Push + VAPID)** 추가.
+ntfy·별도 앱 없이 담기 결과가 잠금화면 알림으로 오고, VAPID 키는 첫 실행 때 `DATA_DIR/vapid.json` 에 자동 생성됩니다.
 
 ---
 
@@ -87,7 +90,8 @@ npm start
    클라우드 서버에서 로그인이 차단되면 **컴퓨터 브라우저(크롬·엣지)** 에서 로그인한 세션을 복사해
    아래 **세션 직접 가져오기**로 연결하세요. (아이폰 사파리·컬리 앱에서는 세션을 복사할 수 없습니다.)
 4. **설정 탭 → 정기 실행** — 주기(기본 2주)·요일(기본 금요일)·시각(기본 21:00)·기준일(첫 실행일).
-5. **알림(선택)** — Slack / Discord / ntfy 웹훅 주소를 넣으면 담기 결과가 전송됩니다.
+5. **알림(선택)** — **이 기기 푸시 알림**을 켜면 담기 결과가 아이폰 잠금화면 알림으로 옵니다(앱 설치·ntfy 불필요).
+   Slack / Discord / ntfy 웹훅 주소를 넣으면 그쪽으로도 같이 보냅니다.
 6. **실행 탭 → 지금 담기** 로 미리 연습 → 컬리 앱에서 장바구니 확인 → 직접 결제.
 7. **아이폰 홈 화면 추가** — Safari 로 접속 → 공유(⬆️) → **홈 화면에 추가**.
    이후에는 주소창 없는 전체 화면 앱으로 열립니다.
@@ -212,6 +216,8 @@ docker compose exec kurly-auto-app npm test    # 컨테이너 안에서 테스�
 6. 아이폰 Safari 로 열고 **홈 화면에 추가**.
 
 > 재배포해도 볼륨(`/data`)은 유지됩니다. 단, 볼륨을 지우면 사용자·컬리 연결이 모두 사라집니다.
+> **웹 푸시는 추가 설정이 필요 없습니다.** 처음 켜질 때 `/data/vapid.json` 에 VAPID 키를 만들어 두고 계속 씁니다.
+> (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` 를 직접 넣어도 되지만, 볼륨을 백업하면 그대로 살아납니다.)
 
 ### 8-2. Fly.io
 
@@ -304,7 +310,8 @@ sudo systemctl restart caddy
 - [ ] `APP_SECRET` 16자 이상, 절대 외부 노출 금지
 - [ ] **HTTPS** (홈 화면 추가·서비스 워커·Secure 쿠키)
 - [ ] **컨테이너·머신 1대** (스케줄러 중복 방지)
-- [ ] `data/` 볼륨 + `APP_SECRET` 함께 백업
+- [ ] `data/` 볼륨 + `APP_SECRET` 함께 백업 (`vapid.json` 도 같이 — 지우면 기존 푸시 구독이 무효가 됩니다)
+- [ ] 푸시 알림을 받을 기기에서 **홈 화면에 추가 → 설정 → 이 기기 푸시 알림** 켜기
 - [ ] 메모리 **1GB 권장** (512MB 도 단일 실행은 가능하지만 빠듯)
 - [ ] 서버 시간대와 무관하게 동작합니다(앱이 Asia/Seoul 기준으로 계산).
 
@@ -319,7 +326,21 @@ sudo systemctl restart caddy
 
 - 앱 첫 화면에 iOS 사용자에게만 "공유 → 홈 화면에 추가" 안내가 뜹니다(닫으면 다시 안 뜸).
 - 오프라인에서는 앱 껍데기(화면)만 열리고, 데이터는 서버 연결이 필요합니다.
-- 아이폰 웹 푸시 알림은 이 버전에서 지원하지 않습니다. 알림은 **웹훅**(Slack/Discord/ntfy)으로 받으세요.
+
+### 아이폰 푸시 알림 (iOS 16.4+)
+
+이 버전은 **앱 자체 웹 푸시(Web Push + VAPID)** 를 지원합니다. ntfy 같은 별도 앱이 필요 없습니다.
+
+1. iOS **16.4 이상** Safari 로 접속 → 공유(⬆️) → **홈 화면에 추가**
+2. 홈 화면 아이콘으로 앱을 엽니다 (**중요**: Safari 탭에서는 푸시가 오지 않습니다)
+3. **설정 → 알림 → 이 기기 푸시 알림** 스위치를 켜고 **허용**을 누릅니다
+4. **테스트 알림 보내기** 로 확인합니다
+
+- 담기 실행(정기·직접)이 끝나면 이 사용자의 **모든 구독 기기**로 결과가 갑니다(웹훅과 별개로 동시에).
+- 알림을 누르면 앱이 열리고 **실행 탭**으로 이동합니다.
+- 구독 정보는 사용자 파일(`data/users/{userId}.json`)에만 저장되며 다른 사용자와 섞이지 않습니다.
+- 푸시 서비스가 `404`/`410`(앱 삭제·구독 만료)으로 답하면 서버가 그 구독을 **자동으로 정리**합니다.
+- 알림이 안 오면: 아이폰 **설정 → 알림 → 컬리 장바구니** 가 허용인지, 홈 화면 앱으로 열었는지 확인하세요.
 
 ---
 
@@ -340,6 +361,9 @@ sudo systemctl restart caddy
 | `REGISTER_RATE_LIMIT` | `20` | IP 당 시간당 가입 시도 제한 |
 | `LOGIN_RATE_LIMIT` | `10` | IP+닉네임 당 15분 로그인 시도 제한 |
 | `WEBHOOK_ALLOW_PRIVATE` | `0` | `1` 이면 localhost·내부망 웹훅 허용(기본은 SSRF 차단) |
+| `VAPID_PUBLIC_KEY` | 자동 생성 | 웹 푸시 공개키. **비우면 `DATA_DIR/vapid.json` 에 최초 1회 자동 생성** |
+| `VAPID_PRIVATE_KEY` | 자동 생성 | 웹 푸시 개인키(공개키와 쌍). 둘 중 하나만 넣으면 무시하고 저장된 키를 씁니다 |
+| `VAPID_SUBJECT` | `mailto:kurly-auto-app@example.invalid` | 푸시 서비스에 알릴 연락처(`mailto:` 또는 `https:`). 자기 메일로 바꾸는 것을 권장 |
 | `BROWSER_ARGS` | `--disable-dev-shm-usage` | Chromium 추가 인자 |
 | `BROWSER_NO_SANDBOX` | `0` | `1` 이면 `--no-sandbox` (일부 호스팅 환경) |
 | `BROWSER_TIMEOUT_MS` | `20000` | 브라우저 기본 타임아웃 |
@@ -369,6 +393,7 @@ kurly-auto-app/
 │   ├── queue.js             # 동시 1개 순차 큐
 │   ├── scheduler.js         # 60초 점검 + 멱등 예약
 │   ├── notify.js            # 웹훅(Slack/Discord/ntfy/generic)
+│   ├── webpush.js           # 웹 푸시(VAPID 키·구독·발송·만료 정리)
 │   ├── webhook-url.js       # 웹훅 주소 SSRF 검사
 │   ├── seeds.js             # 기본 4개 상품
 │   └── logger.js
@@ -376,7 +401,7 @@ kurly-auto-app/
 │   ├── index.html · app.js · styles.css
 │   ├── manifest.json · sw.js
 │   └── icons/ (192·512·maskable·apple-touch)
-├── test/                    # node:test (48개)
+├── test/                    # node:test (99개)
 ├── scripts/
 │   ├── make-icons.mjs       # 아이콘 PNG 생성기 (외부 라이브러리 없음)
 │   ├── ui-test.mjs          # iPhone 390×844 Playwright 점검·스크린샷
@@ -394,7 +419,8 @@ kurly-auto-app/
 ```
 data/
 ├── users-index.json         # 닉네임 ↔ userId
-├── users/{userId}.json      # 계획·일정·알림·암호화된 컬리 세션·실행 기록 (권한 600)
+├── users/{userId}.json      # 계획·일정·알림·푸시 구독·암호화된 컬리 세션·실행 기록 (권한 600)
+├── vapid.json               # 웹 푸시 VAPID 키 (자동 생성, 권한 600 — 백업하면 구독이 유지됨)
 └── logs/{날짜}.log
 ```
 
@@ -422,6 +448,11 @@ data/
 | `GET /api/kurly/status` | 연결 상태(연결됨/만료됨/미연결) |
 | `GET /api/cart/preview` | 무엇을 몇 개 담을지 계산만 |
 | `POST /api/cart/run-now` | 지금 담기(큐) → `202 {job}` |
+| `GET /api/push/vapid-key` | 웹 푸시 공개키(구독용) |
+| `GET /api/push/status` | 내 기기 구독 목록(기기 이름·등록일, 키는 비공개) |
+| `POST /api/push/subscribe` | `{endpoint, keys:{p256dh,auth}, deviceLabel}` → 이 기기 구독 저장 |
+| `POST /api/push/unsubscribe` | `{endpoint}` → 그 기기 구독 삭제 |
+| `POST /api/push/test` | 내 구독 기기로 테스트 알림 발송 |
 | `GET /api/runs?limit=` | 내 실행 기록 |
 | `GET /api/status` | 다음 실행·큐 진행·컬리 상태 |
 | `GET /api/health` | 상태 확인(도커 HEALTHCHECK) |
@@ -440,6 +471,8 @@ data/
 - **레이트리밋**: 가입·로그인·컬리 연결 시도 제한.
 - **CSP·nosniff·프레임 차단** 등 보안 헤더 기본 적용.
 - **웹훅 SSRF 차단**: localhost·사설망·클라우드 메타데이터(169.254.169.254) 주소 기본 거부.
+- **푸시 구독**: endpoint·공개키(P-256)·인증 시크릿만 사용자 파일에 저장하며 서버 밖으로 내보내지 않습니다.
+  VAPID 개인키는 `data/vapid.json`(권한 600) 또는 환경변수에만 있고 API 응답에 포함되지 않습니다.
 - 서버 운영자(=초대한 사람)는 `data/` 파일을 열람할 수 있습니다. **지인 소규모용**으로만 운영하세요.
 - 알림에는 상품명·수량·금액만 담기며 계정 정보는 보내지 않습니다.
 
@@ -447,7 +480,7 @@ data/
 
 ## 14. 테스트 · 검증 결과 (2026-11-19, 실제 실행)
 
-### `npm test` — 48개 통과 (실패 0, 건너뜀 0)
+### `npm run test:unit` — 99개 통과 (실패 0, 건너뜀 0)
 
 | 영역 | 확인한 내용 |
 |---|---|
@@ -461,11 +494,12 @@ data/
 | 격리 | A 의 계획·기록이 B 에게 안 보임, 사용자 파일 분리, 평문 비밀번호 없음 |
 | 실행 API | 미연결 상태 실행 → 실패 기록, 중복 실행 409, 미리보기는 기록 없음 |
 | 웹훅 | Slack/Discord/ntfy/generic 형식, 실제 로컬 수신, 문구(✅➕❌⏭·금액), SSRF 차단 |
+| 웹 푸시 | VAPID 키 자동 생성·권한 0600·재시작 후 유지·환경변수 우선, 구독 사용자별 저장/해지, 410 만료 정리, 실행 결과 발송(미리보기 제외), SW push·notificationclick, 푸시 UI |
 | **실제 컬리** | `/api/search` 검색 24건 수신, `/api/product?no=5029849` → 유정란 15구·8,290원·15구 파싱 |
 | **담기 동작(비회원)** | `node scripts/check-kurly-selectors.mjs` → 상품 페이지 열기 → **담기 성공(added)** → 장바구니 1건 확인 |
 | PWA | 매니페스트·아이콘 PNG 크기·서비스 워커 범위·CSP·경로 탈출 차단 |
 
-### `npm run test:ui` — iPhone 390×844, 34개 체크 전부 통과
+### `npm run test:ui` — iPhone 390×844, 36개 체크 전부 통과
 
 가입(초대 코드) → 기본 4개 상품(수량 2개씩 자동) → 실제 컬리 검색 → 계획 추가 → 저장 →
 **새로고침 후 5개 유지** → 미리보기 → 설정 기본값 → 서비스 워커 활성화 → **콘솔 오류 0건**.
@@ -541,7 +575,8 @@ data/
 7. **비용·한도**: 사용자별 실행 횟수/상품 수 제한, 유료 플랜, 브라우저 워커 오토스케일.
 8. **법적·정책**: 컬리 이용약관과 자동화 허용 범위 확인, 개인정보 처리방침, 탈퇴 시 데이터 삭제.
    (가능하면 컬리 공식 제휴/API 가 있는지 먼저 확인하세요.)
-9. **모바일 앱(선택)**: PWA 로 충분하지만, iOS 푸시 알림이 필요하면 APNs 푸시를 붙인 래퍼 앱을 고려.
+9. **모바일 앱(선택)**: 지금도 iOS 16.4+ 홈 화면 앱 웹 푸시로 알림이 오므로 APNs 래퍼 앱은 필수가 아닙니다.
+   App Store 배포·위젯·백그라운드 동기화가 필요해질 때만 검토하세요.
 
 ---
 

@@ -255,6 +255,26 @@ async function main() {
     check((await page.inputValue('#scheduleInterval')) === '2', '기본 주기 2주');
     const anchor = await page.inputValue('#scheduleAnchor');
     check(/^\d{4}-\d{2}-\d{2}$/.test(anchor), '기준일 자동 입력', anchor);
+
+    // 이 기기 푸시 알림 (iOS 홈 화면 앱 Web Push)
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pushStateText');
+      return el && el.textContent && el.textContent !== '확인 중…';
+    });
+    const pushUi = await page.evaluate(() => ({
+      hasToggle: !!document.querySelector('#pushToggle'),
+      toggleDisabled: document.querySelector('#pushToggle')?.disabled ?? null,
+      testDisabled: document.querySelector('#pushTestBtn')?.disabled ?? null,
+      state: document.querySelector('#pushStateText')?.textContent?.trim(),
+      hint: document.querySelector('#pushHint')?.textContent?.trim(),
+    }));
+    check(pushUi.hasToggle && (pushUi.toggleDisabled === false || /Safari 탭에서는/.test(pushUi.hint || '')), '이 기기 푸시 알림 스위치', pushUi.state);
+    if (/Safari 탭에서는/.test(pushUi.hint || '')) {
+      // 이 점검은 아이폰 UA(일반 Safari 탭)로 돌기 때문에, 홈 화면 앱에서 켜라는 안내가 맞습니다.
+      check(pushUi.toggleDisabled === true && /홈 화면에 추가/.test(pushUi.hint), 'Safari 탭에서는 푸시 불가 안내', pushUi.hint);
+    } else {
+      check(pushUi.testDisabled === true, '구독 전 테스트 알림 버튼 비활성', pushUi.hint || '');
+    }
     await shot('10-settings-390x844.png');
 
     console.log('\n7) 서비스 워커 / PWA');
@@ -272,7 +292,10 @@ async function main() {
     check(manifest && manifest.display === 'standalone' && manifest.icons.length >= 3, '매니페스트 로드', manifest ? manifest.name : 'null');
 
     const offlineHtml = await page.evaluate(async () => {
-      const cache = await caches.open('kurly-v2.0.0');
+      const names = await caches.keys();
+      const name = names.find((n) => n.startsWith('kurly-')) || names[0];
+      if (!name) return [];
+      const cache = await caches.open(name);
       const keys = await cache.keys();
       return keys.map((k) => new URL(k.url).pathname);
     });
