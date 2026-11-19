@@ -1,0 +1,28 @@
+name: tests
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+permissions:
+  contents: read
+jobs:
+  unit:
+    name: 단위·API 테스트 (네트워크 불필요)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: npm ci
+        env: { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }
+      - run: npm run test:unit
+  live:
+    name: 실제 컬리 연결 점검 (정보용 — 실패해도 통과)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: npm ci
+        env: { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }
+      - run: npm run test:live
