@@ -1,5 +1,8 @@
 # 🛒 컬리 정기 장바구니 (kurly-auto-app)
 
+[![tests](https://github.com/yoonyoon0117-crypto/kurly-auto-app/actions/workflows/test.yml/badge.svg)](https://github.com/yoonyoon0117-crypto/kurly-auto-app/actions/workflows/test.yml)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 마켓컬리에서 **2주마다 정해진 요일·시각에, 2주 소비량만큼만 장바구니에 담아주는** 웹 앱입니다.
 이번 버전은 **여러 명(초대받은 지인)이 각자 계정으로 쓰는 PWA**이고, **도커로 작은 클라우드 서버에 올려
 아이폰 "홈 화면에 추가"로 앱처럼** 쓸 수 있게 만든 버전입니다.
