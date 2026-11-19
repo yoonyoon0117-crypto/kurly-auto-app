@@ -27,9 +27,9 @@ function setupEnv(overrides = {}) {
   return root;
 }
 
-async function startServer({ logger = SILENT_LOGGER } = {}) {
+async function startServer({ logger = SILENT_LOGGER, appOptions = {} } = {}) {
   const { createApp } = require('../server');
-  const app = createApp({ logger, schedulerEnabled: false });
+  const app = createApp({ logger, schedulerEnabled: false, ...appOptions });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const { port } = app.server.address();
   const baseUrl = `http://127.0.0.1:${port}`;

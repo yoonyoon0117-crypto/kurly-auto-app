@@ -5,7 +5,7 @@
  *  · 화면 요청: 네트워크 우선 → 실패하면 캐시된 index.html (오프라인에서도 "앱처럼" 열림)
  *  · /api/*: 항상 네트워크 (장바구니·실행 상태가 낡으면 안 됨)
  */
-const VERSION = 'kurly-v2.0.1';
+const VERSION = 'kurly-v2.0.2';
 const SHELL = [
   '/',
   '/index.html',

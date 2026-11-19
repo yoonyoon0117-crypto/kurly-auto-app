@@ -84,6 +84,7 @@ npm start
 2. **계획 탭** — 상품 검색(실제 컬리 검색) → `계획에 추가` → 한 단위 크기와 **2주 소비량** 입력.
    `담을 수량 = 올림(2주 소비량 ÷ 한 단위)` 로 자동 계산됩니다. 수량을 직접 정하고 싶으면 `수량 직접`.
 3. **설정 탭 → 컬리 계정 연결** — 컬리 아이디·비밀번호로 **한 번만** 연결.
+   클라우드 서버에서 로그인이 차단되면 아래 **세션 직접 가져오기**를 쓰세요.
 4. **설정 탭 → 정기 실행** — 주기(기본 2주)·요일(기본 금요일)·시각(기본 21:00)·기준일(첫 실행일).
 5. **알림(선택)** — Slack / Discord / ntfy 웹훅 주소를 넣으면 담기 결과가 전송됩니다.
 6. **실행 탭 → 지금 담기** 로 미리 연습 → 컬리 앱에서 장바구니 확인 → 직접 결제.
@@ -144,6 +145,17 @@ npm start
   이때 앱은 일반 문구 대신 **컬리가 실제로 돌려준 HTTP 상태·errorCode·안내 문구**를 설정 화면과 알림에 그대로 표시합니다(예: `컬리가 로그인을 거부했습니다 — "아이디 또는 비밀번호를 확인해주세요." (HTTP 422 · S001)`).
 - **로그인 시 보안문자·추가 인증**이 뜨면 자동 로그인이 실패할 수 있습니다. 잠시 후 다시 시도하거나,
   컬리 앱에서 로그인 확인 후 다시 연결해 보세요.
+- **세션 직접 가져오기 (reCAPTCHA 우회)** — 설정 탭의 `컬리 계정 연결` 아래 접이식 항목에서,
+  이미 로그인된 내 브라우저의 세션을 그대로 붙여넣거나 파일로 올려 연결할 수 있습니다.
+  - **Cookie 헤더**: 브라우저에서 컬리에 로그인 → 개발자도구(F12) **Network** 탭 → 요청 하나 선택 →
+    **Request Headers** 의 `cookie:` 줄 전체를 복사해 붙여넣기. (여러 줄 헤더 블록을 통째로 붙여도 `cookie:` 줄만 읽습니다)
+  - **storageState JSON**: 로컬 `kurly-auto-cart` 의 `.state/kurly-storage.json` 또는 Playwright 로 저장한
+    `storage-state.json` 을 업로드. 형식: `{ "cookies": [...], "origins": [...] }`
+  - 컬리 로그인 세션은 **HttpOnly 쿠키(ksi·krt)** 에 들어 있습니다(2026-11-19 실측: `Set-Cookie` … `Domain=kurly.com; Secure; HttpOnly; SameSite=None`).
+    그래서 주소창의 `document.cookie` 로는 복사할 수 없고, 빠진 채 붙여넣으면 앱이 경고를 보여줍니다.
+  - 가져온 세션도 **검증 후** 연결되며, 성공하면 브라우저가 갱신한 쿠키까지 다시 암호화해 보관합니다.
+    실패하면 `유효한 컬리 로그인 세션을 확인하지 못했습니다. 로그인된 상태에서 다시 복사해 주세요.` 가 표시됩니다.
+  - 주소창의 `document.cookie` 값에는 분석용 쿠키만 남으므로, 로그인 세션을 옮기려면 반드시 위 두 방법을 쓰세요.
 - `APP_SECRET` 을 바꾸면 **모든 로그인 세션과 저장된 컬리 세션이 무효**가 됩니다(다시 연결 필요).
 - 실행 중 로그인이 풀리면 그 실행은 중단되고 나머지 상품은 `건너뜀` 으로 기록됩니다.
 - 한 번 실행할 때 상품마다 상품 페이지를 열어 옵션·수량을 고르고 담습니다(상품 4개면 1~2분).
@@ -345,6 +357,7 @@ kurly-auto-app/
 │   ├── passwords.js         # scrypt 해시(사용자별 salt)
 │   ├── sessions.js          # HMAC 서명 세션 쿠키 + sessionEpoch
 │   ├── crypto-box.js        # AES-256-GCM (컬리 세션 암호화)
+│   ├── session-import.js    # 쿠키 헤더·storageState JSON → Playwright storageState 해석
 │   ├── store.js             # 사용자별 JSON 원자적 저장·직렬화 쓰기
 │   ├── plan.js              # 수량 계산·2주 주기·다음 실행·due 계산
 │   ├── kurly-api.js         # 컬리 검색/상품 상세 (읽기 전용)
@@ -400,6 +413,7 @@ data/
 | `GET /api/search?q=` | 실제 컬리 상품 검색 |
 | `GET /api/product?no=` | 상품 상세(단위·옵션·품절) |
 | `POST /api/kurly/connect` | `{kurlyId, kurlyPassword}` → 큐에서 로그인, 세션 암호화 저장 |
+| `POST /api/kurly/import-session` | `{session, label}` — 쿠키 헤더/storageState JSON 을 검증 후 연결 (실패 400) |
 | `POST /api/kurly/verify` | 저장된 세션 유효성 확인 |
 | `POST /api/kurly/disconnect` | 연결 해제(세션 삭제) |
 | `GET /api/kurly/status` | 연결 상태(연결됨/만료됨/미연결) |

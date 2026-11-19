@@ -486,6 +486,13 @@ function renderKurlyCard() {
   const active = state.status?.queue?.active;
   $('#kurlyConnectBtn').disabled = Boolean(active && active.type === 'kurly-connect');
   $('#kurlyConnectBtn').textContent = active?.type === 'kurly-connect' ? '연결하는 중…' : '연결하기';
+
+  const importing = active?.type === 'kurly-import';
+  const importBtn = $('#sessionImportBtn');
+  if (importBtn) {
+    importBtn.disabled = importing;
+    importBtn.textContent = importing ? '세션 확인 중…' : '세션 확인 및 연결';
+  }
 }
 
 function shortDate(ms) {
@@ -1029,6 +1036,80 @@ async function disconnectKurly() {
   }
 }
 
+/* ─────────────── 컬리 세션 직접 가져오기 ─────────────── */
+
+function setImportMsg(message, isError = false) {
+  const box = $('#sessionImportMsg');
+  if (!box) return;
+  box.hidden = !message;
+  box.textContent = message || '';
+  box.className = isError ? 'hint import-msg error' : 'hint import-msg';
+}
+
+async function readSessionFile(file) {
+  if (!file) return '';
+  if (file.size > 400 * 1024) throw new Error('세션 파일이 너무 큽니다(400KB 이하).');
+  return await file.text();
+}
+
+/** 세션 붙여넣기/파일로 컬리를 연결합니다. (connectKurly 와 같은 /api/status 폴링) */
+async function importKurlySession() {
+  const btn = $('#sessionImportBtn');
+  const raw = $('#sessionRaw').value.trim();
+  const label = $('#sessionLabel').value.trim();
+  if (!raw) {
+    setImportMsg('세션을 먼저 붙여넣거나 파일을 올려 주세요.', true);
+    toast('세션을 먼저 붙여넣거나 파일을 올려 주세요.', true);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '확인 중…';
+  setImportMsg('');
+  try {
+    const data = await api('/api/kurly/import-session', { method: 'POST', body: { session: raw, label } });
+    const warning = (data.session?.warnings || [])[0];
+    if (warning) setImportMsg(warning, true);
+    toast('가져온 세션으로 컬리 로그인을 확인하고 있어요. 잠시만 기다려 주세요.');
+    ensurePolling(true);
+    pollStatus().catch(() => {});
+
+    let waited = 0;
+    const timer = setInterval(async () => {
+      waited += 2500;
+      try {
+        const status = await pollStatus();
+        const active = status.queue?.active;
+        if (active) {
+          if (waited > 90000) {
+            clearInterval(timer);
+            setImportMsg('세션 확인이 오래 걸리고 있어요. 잠시 뒤 연결 상태를 확인해 주세요.', true);
+          }
+          return;
+        }
+        clearInterval(timer);
+        if (status.kurly?.status === 'connected') {
+          $('#sessionRaw').value = '';
+          $('#sessionFile').value = '';
+          $('#sessionFileInfo').textContent = 'kurly-state.json · storage-state.json';
+          setImportMsg(`세션을 연결했어요${status.kurly?.account ? ` (${status.kurly.account})` : ''}. 이제 정기 실행이 가능해요.`);
+          toast('컬리 세션을 가져왔어요!');
+        } else {
+          setImportMsg(status.kurly?.lastError || '유효한 컬리 로그인 세션을 확인하지 못했습니다. 로그인된 상태에서 다시 복사해 주세요.', true);
+          toast(status.kurly?.lastError || '세션을 확인하지 못했어요.', true);
+        }
+      } catch {
+        clearInterval(timer);
+      }
+    }, 2500);
+  } catch (err) {
+    setImportMsg(err.message, true);
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '세션 확인 및 연결';
+  }
+}
+
 async function loadStarter() {
   try {
     const data = await api('/api/items/starter', { method: 'POST', body: {} });
@@ -1157,6 +1238,20 @@ function bindEvents() {
     (sel) => $(sel).addEventListener('change', readScheduleInputs)
   );
   $('#kurlyForm').addEventListener('submit', connectKurly);
+  $('#sessionImportBtn').addEventListener('click', importKurlySession);
+  $('#sessionFile').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    $('#sessionFileInfo').textContent = file.name;
+    try {
+      const text = await readSessionFile(file);
+      $('#sessionRaw').value = text.trim();
+      setImportMsg(`${file.name} 을(를) 읽었어요. [세션 확인 및 연결] 을 눌러 주세요.`);
+    } catch (err) {
+      setImportMsg(err.message, true);
+      toast(err.message, true);
+    }
+  });
   $('#kurlyVerifyBtn').addEventListener('click', verifyKurly);
   $('#kurlyDisconnectBtn').addEventListener('click', disconnectKurly);
   $('#logoutBtn').addEventListener('click', logout);

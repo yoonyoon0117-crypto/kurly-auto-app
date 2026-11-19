@@ -23,6 +23,7 @@ const { hashPassword, verifyPassword } = require('./lib/passwords');
 const { sealJson, openJson } = require('./lib/crypto-box');
 const { normalizePlanInput, summarizePlan, computeQuantity } = require('./lib/plan');
 const { searchProducts, getProductDetail, KurlyApiError } = require('./lib/kurly-api');
+const { parseSessionInput } = require('./lib/session-import');
 const { starterItems } = require('./lib/seeds');
 const { createLogger } = require('./lib/logger');
 const { JobQueue } = require('./lib/queue');
@@ -141,9 +142,24 @@ async function addStarterItems(user) {
 
 /* ─────────────── 앱 만들기 ─────────────── */
 
-function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('SCHEDULER', true) } = {}) {
+function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('SCHEDULER', true), verifyKurlySession = null, loginKurly = null } = {}) {
   ensureSecrets(logger);
   store.ensureDirs();
+
+  // 세션 확인·로그인은 기본적으로 Playwright 로 합니다. 테스트에서는 브라우저 없이 바꿔 끼울 수 있습니다.
+  const verifySessionImpl =
+    verifyKurlySession ||
+    (async (storageState) => {
+      const lib = require('./lib/kurly-browser');
+      return lib.verifySessionWithState(storageState, { headless: true });
+    });
+  const loginImpl =
+    loginKurly ||
+    ((opts) => {
+      const lib = require('./lib/kurly-browser');
+      return lib.loginAndCapture(opts);
+    });
+  const INVALID_SESSION_MESSAGE = '유효한 컬리 로그인 세션을 확인하지 못했습니다. 로그인된 상태에서 다시 복사해 주세요.';
 
   /* 큐: 어떤 사용자의 작업이든 동시에 1개(Chromium 1개)만 실행 */
   const queue = new JobQueue({
@@ -157,9 +173,8 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         job.secret = null;
         if (!kurlyId || !kurlyPassword) throw new Error('컬리 아이디와 비밀번호를 입력해 주세요.');
         setProgress('컬리 로그인 중…');
-        const lib = require('./lib/kurly-browser');
         try {
-          const { storageState, account } = await lib.loginAndCapture({
+          const { storageState, account } = await loginImpl({
             kurlyId,
             kurlyPassword,
             logger,
@@ -190,6 +205,59 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
           });
           throw err;
         }
+      }
+
+      if (job.type === 'kurly-import') {
+        const user = store.getUser(job.userId);
+        if (!user) throw new Error('사용자를 찾을 수 없습니다.');
+        const { storageState, label } = job.secret || {};
+        job.secret = null;
+        if (!storageState || !Array.isArray(storageState.cookies)) throw new Error('가져온 세션이 없습니다.');
+        setProgress('가져온 컬리 세션 확인 중…');
+
+        let verified;
+        try {
+          verified = await verifySessionImpl(storageState);
+        } catch (err) {
+          // Playwright 설치 안내처럼 긴 오류문 전체를 화면에 남기지 않도록 한 줄로 줄입니다.
+          const brief = String(err?.message || err || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+          const message = `가져온 세션을 확인하지 못했습니다: ${brief}`;
+          await store.updateUser(job.userId, (u) => {
+            u.kurly = { ...u.kurly, lastError: message };
+            return u;
+          });
+          throw err;
+        }
+
+        if (!verified || verified.loggedIn !== true) {
+          await store.updateUser(job.userId, (u) => {
+            u.kurly = {
+              ...u.kurly,
+              // 기존에 연결된 세션이 있으면 그 상태는 건드리지 않고 실패 사유만 남깁니다.
+              status: u.kurly?.session ? u.kurly.status || 'expired' : 'disconnected',
+              lastError: INVALID_SESSION_MESSAGE,
+            };
+            return u;
+          });
+          logger.info(`컬리 세션 가져오기 실패(유효하지 않음): ${user.nickname}`);
+          return { status: 'invalid', error: INVALID_SESSION_MESSAGE };
+        }
+
+        const account = String(label || '').trim().slice(0, 40) || '세션 연결됨';
+        const sealed = sealJson(verified.storageState || storageState);
+        await store.updateUser(job.userId, (u) => {
+          u.kurly = {
+            status: 'connected',
+            account,
+            connectedAt: Date.now(),
+            lastVerifiedAt: Date.now(),
+            lastError: null,
+            session: sealed,
+          };
+          return u;
+        });
+        logger.info(`컬리 세션 가져오기 완료: ${user.nickname} (${account})`);
+        return { status: 'connected', account };
       }
 
       if (job.type === 'kurly-verify') {
@@ -366,6 +434,44 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
     return sendJson(res, 202, { ok: true, job: { id: job.id, status: job.status, progress: job.progress } });
   }
 
+  async function handleKurlyImport(req, res, user, body) {
+    const raw = typeof body.session === 'string' ? body.session : typeof body.raw === 'string' ? body.raw : '';
+    const label = String(body.label ?? '').trim().slice(0, 40);
+    if (!rateLimit(`kurly-import:${user.userId}`, { max: 10, windowMs: 15 * 60 * 1000 })) {
+      throw new HttpError(429, '세션 가져오기 시도가 너무 많습니다. 15분 뒤 다시 시도해 주세요.');
+    }
+
+    let parsed;
+    try {
+      parsed = parseSessionInput(raw);
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+
+    const active = queue.activeFor(user.userId);
+    if (active && active.type === 'kurly-import') {
+      return sendJson(res, 202, {
+        ok: true,
+        job: { id: active.id, status: active.status, progress: active.progress },
+        session: { source: parsed.source, cookieNames: parsed.cookieNames, warnings: parsed.warnings },
+      });
+    }
+
+    const job = queue.enqueue({
+      type: 'kurly-import',
+      userId: user.userId,
+      trigger: 'manual',
+      dedupeKey: `kurly-import:${user.userId}`,
+      secret: { storageState: parsed.storageState, label },
+    });
+    logger.info(`컬리 세션 가져오기 접수: ${user.nickname} · 쿠키 ${parsed.cookieNames.length}개(${parsed.cookieNames.join(',')})`);
+    return sendJson(res, 202, {
+      ok: true,
+      job: { id: job.id, status: job.status, progress: job.progress },
+      session: { source: parsed.source, cookieNames: parsed.cookieNames, warnings: parsed.warnings },
+    });
+  }
+
   async function handle(req, res) {
     applySecurityHeaders(res);
     const startedAt = Date.now();
@@ -480,6 +586,9 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         }
         if (pathname === '/api/kurly/connect' && method === 'POST') {
           return await handleKurlyConnect(req, res, user, body);
+        }
+        if (pathname === '/api/kurly/import-session' && method === 'POST') {
+          return await handleKurlyImport(req, res, user, body);
         }
         if (pathname === '/api/kurly/verify' && method === 'POST') {
           if (!user.kurly?.session) throw new HttpError(400, '먼저 컬리 계정을 연결해 주세요.');

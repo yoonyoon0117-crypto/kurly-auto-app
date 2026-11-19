@@ -208,6 +208,23 @@ test('큐: dedupeKey 로 같은 작업이 중복되지 않는다', async () => {
   queue.stop();
 });
 
+test('큐: 비밀값(secret)은 작업에 전달되고, 끝나면 메모리에서도 지운다', async () => {
+  let received = null;
+  const queue = new JobQueue({
+    concurrency: 1,
+    handler: async (job) => {
+      received = job.secret;
+      await sleep(20);
+      job.secret = null; // 실제 핸들러(로그인·세션 가져오기)도 쓰는 즉시 비웁니다.
+    },
+  });
+  const job = queue.enqueue({ type: 'kurly-import', userId: 'u1', secret: { token: 'abc' } });
+  await waitUntil(() => job.status === 'done');
+  assert.deepEqual(received, { token: 'abc' }, 'enqueue 에 넣은 secret 이 핸들러까지 전달되어야 합니다.');
+  assert.equal(job.secret, null);
+  queue.stop();
+});
+
 test('사용자 파일 저장은 원자적이고 동시 갱신이 유실되지 않는다', async () => {
   const user = await store.createUser({ nickname: '동시성', passwordHash: hashPassword('password123') });
   await Promise.all(
