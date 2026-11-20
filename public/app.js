@@ -887,9 +887,11 @@ async function runRecipesOnly() {
     return;
   }
   const kurly = state.status?.kurly || { status: 'disconnected' };
-  if (kurly.status !== 'connected') {
-    toast(kurly.status === 'expired' ? '컬리 로그인이 만료됐어요. 다시 연결해 주세요.' : '먼저 컬리 계정을 연결해 주세요.', true);
-    setTab('settings');
+  if (kurly.status !== 'connected' || state.plan?.checklistOnly === true) {
+    toast('아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
+    const card = $('#checklistCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    refreshChecklist();
     return;
   }
   setRunBusy(true, '요리 재료를 담을 준비 중…');
@@ -1198,15 +1200,17 @@ function renderRun() {
   const k = s.kurly || { status: 'disconnected' };
   const planned = mergedPlannedCount();
   const connected = k.status === 'connected';
+  const listOnly = !connected || state.plan?.checklistOnly === true;
 
   let hint = '정기 실행일을 기다리지 않고 바로 담아볼 수 있어요.';
   if (!planned) hint = '먼저 계획에 상품을 담거나 요리를 선택해 주세요.';
-  else if (!connected) hint = '컬리 계정을 연결하면 바로 담을 수 있어요.';
+  else if (listOnly) hint = '컬리 로그인 없이도 아래 [이번 주 장볼 목록]에서 [컬리에서 열기]로 담을 수 있어요.';
   else if (state.plan?.schedule) hint = `다음 정기 실행 ${nextRunLabelFor(state.plan.schedule)}`;
   $('#runHint').textContent = hint;
 
   $('#previewBtn').disabled = !planned;
   $('#runNowBtn').disabled = state.busy || !planned;
+  $('#runNowBtn').textContent = listOnly ? '목록으로 장보기' : '지금 담기';
   renderMixLines();
   renderRunHistory();
   renderKurlyCard();
@@ -1218,7 +1222,9 @@ function setRunBusy(busy, progressText) {
   if (busy && progressText) $('#runProgressText').textContent = progressText;
   const planned = mergedPlannedCount();
   $('#runNowBtn').disabled = busy || !planned;
-  $('#runNowBtn').textContent = busy ? '담는 중…' : '지금 담기';
+  const connected = (state.status?.kurly || {}).status === 'connected';
+  const listOnly = !connected || state.plan?.checklistOnly === true;
+  $('#runNowBtn').textContent = busy ? '담는 중…' : listOnly ? '목록으로 장보기' : '지금 담기';
   const recipeBtn = $('#recipeRunBtn');
   if (recipeBtn) {
     recipeBtn.disabled =
@@ -1375,7 +1381,9 @@ async function pollStatus() {
       refreshChecklist();
       const last = state.status?.lastRun || state.runs[0];
       if (last) {
-        if (last.status === 'success') toast(`담기 완료! ${last.added + last.merged}개 상품을 담았어요.`);
+        if (last.status === 'checklist') {
+          toast(`장볼 목록 ${(last.items || []).length}개를 준비했어요. [컬리에서 열기]로 담아 주세요.`);
+        } else if (last.status === 'success') toast(`담기 완료! ${last.added + last.merged}개 상품을 담았어요.`);
         else if (last.status === 'partial') toast(`${last.failed}개 상품은 담지 못했어요. 기록을 확인해 주세요.`, true);
         else if (last.error) toast(last.error, true);
       }
@@ -1672,9 +1680,9 @@ async function runNow() {
     return;
   }
   const kurly = state.status?.kurly || { status: 'disconnected' };
-  if (kurly.status !== 'connected') {
-    // 컬리가 연결되지 않았으면 실패가 아니라 장볼 목록으로 안내합니다.
-    toast('컬리 로그인이 없어도 괜찮아요. 아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
+  if (kurly.status !== 'connected' || state.plan?.checklistOnly === true) {
+    // 컬리 로그인이 없거나 '목록 알림만 받기' 모드면 담는 대신 장볼 목록으로 안내합니다.
+    toast('아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
     const card = $('#checklistCard');
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     refreshChecklist();

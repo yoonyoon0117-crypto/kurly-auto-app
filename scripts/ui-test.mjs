@@ -387,6 +387,13 @@ async function main() {
     await waitToastGone();
     await shot('17-run-checklist-390x844.png');
 
+    // 컬리 미연결 → [목록으로 장보기]는 실행 기록을 만들지 않고 목록으로 안내합니다.
+    check((await page.innerText('#runNowBtn')).includes('목록으로 장보기'), '미연결이면 버튼이 [목록으로 장보기]');
+    await page.click('#runNowBtn');
+    await waitToastGone();
+    check(await page.isVisible('#runEmpty'), '[목록으로 장보기]는 실행 기록을 만들지 않는다');
+    check((await page.locator('#checklistList .check-item').count()) === 7, '목록은 그대로 유지');
+
     await page.locator('#checklistList .check-box i').first().click();
     await page.waitForFunction(
       () => (document.querySelector('#checklistMeta')?.textContent || '').includes('담음 1'),
