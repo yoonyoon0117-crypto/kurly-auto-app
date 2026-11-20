@@ -92,7 +92,7 @@ test('남의 실행 기록은 보이지 않는다 (실패한 실행도 본인 �
   const a = await register(server.baseUrl, { nickname: '실행에이', password: 'password123', loadStarter: true });
   const b = await register(server.baseUrl, { nickname: '실행비이', password: 'password123', loadStarter: true });
 
-  // A 가 바로 담기 실행 → 컬리 연결이 없으므로 실패 기록이 남습니다(브라우저는 열지 않음)
+  // A 가 바로 담기 실행 → 컬리 연결이 없으면 실패가 아니라 '장볼 목록' 준비 기록이 남습니다(브라우저는 열지 않음)
   const started = await request(server.baseUrl, '/api/cart/run-now', { method: 'POST', cookie: a.cookie, body: {} });
   assert.equal(started.status, 202);
   assert.ok(started.body.job.id.startsWith('job_'));
@@ -100,8 +100,9 @@ test('남의 실행 기록은 보이지 않는다 (실패한 실행도 본인 �
   const status = await waitForIdle(a.cookie);
   assert.equal(status.queue.active, null);
   assert.ok(status.lastRun, 'A 의 마지막 실행 기록이 있어야 합니다.');
-  assert.equal(status.lastRun.status, 'failed');
-  assert.match(status.lastRun.error, /컬리 계정 연결이 필요합니다/);
+  assert.equal(status.lastRun.status, 'checklist');
+  assert.equal(status.lastRun.checklistMode, true);
+  assert.equal(status.lastRun.error, null);
 
   const aRuns = await request(server.baseUrl, '/api/runs', { cookie: a.cookie });
   assert.equal(aRuns.status, 200);

@@ -170,14 +170,14 @@ test('계획 저장: 검증 실패는 400, 성공하면 다음 실행일이 계�
           consumption: 30,
         },
       ],
-      schedule: { enabled: true, weekday: 5, time: '21:00', intervalWeeks: 2, anchorDate: '2026-11-20' },
+      schedule: { enabled: true, weekday: 5, time: '21:00', intervalWeeks: 2, anchorDate: '2030-01-04' },
       notification: { webhookUrl: '', webhookType: 'auto' },
     },
   });
   assert.equal(valid.status, 200);
   assert.equal(valid.body.plan.items.length, 1);
   assert.equal(valid.body.plan.items[0].quantity, 2);
-  assert.equal(valid.body.plan.summary.nextRunLabel, '2026-11-20 (금) 21:00');
+  assert.equal(valid.body.plan.summary.nextRunLabel, '2030-01-04 (금) 21:00');
   assert.equal(valid.body.plan.summary.estimatedTotal, 8290 * 2);
 
   const read = await request(server.baseUrl, '/api/plan', { cookie: res.cookie });
@@ -188,7 +188,7 @@ test('계획 저장: 검증 실패는 400, 성공하면 다음 실행일이 계�
   const userFile = path.join(server.dataDir, 'users', `${res.body.user.userId}.json`);
   const stored = JSON.parse(fs.readFileSync(userFile, 'utf8'));
   assert.equal(stored.items.length, 1);
-  assert.equal(stored.schedule.anchorDate, '2026-11-20');
+  assert.equal(stored.schedule.anchorDate, '2030-01-04');
 });
 
 test('다른 사이트에서 보낸 상태 변경 요청은 403 (CSRF 보조)', async () => {

@@ -91,6 +91,7 @@ async function main() {
 
   const consoleErrors = [];
   const pageErrors = [];
+  page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
   page.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
   });
@@ -108,7 +109,7 @@ async function main() {
 
   async function shot(name) {
     const file = path.join(SHOT_DIR, name);
-    await page.screenshot({ path: file, fullPage: false });
+    await page.screenshot({ path: file, fullPage: false, animations: 'disabled' });
     shots.push(file);
     console.log(`  📸 ${file}`);
   }
@@ -246,6 +247,215 @@ async function main() {
     // 미리보기는 실행 기록을 남기지 않습니다.
     check(await page.isVisible('#runEmpty'), '미리보기는 실행 기록을 남기지 않음');
     await shot('09-run-tab-390x844.png');
+
+    const tabs = await page.locator('.tabbar button').allInnerTexts();
+    check(tabs.length === 4 && tabs.some((t) => t.includes('요리')), '요리 탭이 함께 있습니다', tabs.map((t) => t.trim()).join(' / '));
+
+    console.log('\n5-2) 요리 탭 — 좋아하는 요리와 필수재료');
+    await page.click('.tabbar [data-tab="recipes"]');
+    await page.waitForSelector('#screen-recipes:not([hidden])');
+    check(await page.isVisible('#recipeEmpty'), '처음에는 등록한 요리가 없음');
+    check((await page.innerText('#recipeSelectedLabel')).includes('선택한 요리 없음'), '선택한 요리 없음 안내');
+    await shot('12-recipes-empty-390x844.png');
+
+    await page.click('#newRecipeBtn');
+    await page.waitForSelector('#recipeSheet:not([hidden])');
+    await page.fill('#recipeName', '된장찌개');
+    await page.fill('#recipeNote', '주말 저녁');
+    await page.fill('#recipeSearchInput', '두부');
+    await page.click('#recipeSearchBtn');
+    await page.waitForSelector('#recipeSearchResults .product-card', { timeout: 30000 });
+    const ingredientResults = await page.locator('#recipeSearchResults .product-card').count();
+    check(ingredientResults > 0, '요리 편집 안에서 컬리 재료 검색', `${ingredientResults}개`);
+    await page.locator('#recipeSearchResults .product-card button:not([disabled])').first().click();
+    await page.waitForSelector('#recipeIngEdit .recipe-ing-row');
+    check((await page.locator('#recipeIngEdit .recipe-ing-row').count()) === 1, '첫 재료가 추가됨');
+
+    await page.click('#recipeQuickKeywords [data-q="대파"]');
+    // 이전 검색 결과가 남아 있으므로, 새 검색어의 결과가 도착할 때까지 기다립니다.
+    await page.waitForFunction(
+      () => (document.querySelector('#recipeSearchStatus')?.textContent || '').includes('‘대파’'),
+      null,
+      { timeout: 30000 }
+    );
+    await page.waitForSelector('#recipeSearchResults .product-card');
+    await page.locator('#recipeSearchResults .product-card button:not([disabled])').first().click();
+    await page.waitForFunction(() => document.querySelectorAll('#recipeIngEdit .recipe-ing-row').length === 2, null, {
+      timeout: 10000,
+    });
+    check((await page.locator('#recipeIngEdit .recipe-ing-row').count()) === 2, '두 번째 재료가 추가됨');
+
+    // 수량 +/− 스테퍼
+    await page.locator('#recipeIngEdit .qty-stepper button').nth(1).click();
+    const firstQty = await page.locator('#recipeIngEdit .qty-stepper span').first().innerText();
+    check(firstQty.trim() === '2', '재료 수량 늘리기', firstQty.trim());
+    check((await page.innerText('#recipeIngCount')).includes('2'), '재료 개수 표시', await page.innerText('#recipeIngCount'));
+    await waitToastGone();
+    await page.waitForTimeout(400);
+    await shot('13-recipe-editor-390x844.png');
+
+    await page.click('#recipeSaveBtn');
+    await page.waitForFunction(() => document.querySelector('#recipeSheet').hidden);
+    await page.waitForSelector('.recipe-card');
+    check((await page.innerText('.recipe-card .recipe-name')) === '된장찌개', '저장한 요리가 카드로 보임');
+    check((await page.innerText('#recipeStatSelected')).includes('1'), '선택한 요리 1개', await page.innerText('#recipeStatSelected'));
+    check((await page.innerText('#recipeStatIngredients')).includes('2'), '담을 재료 2개', await page.innerText('#recipeStatIngredients'));
+    const recipeOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    check(recipeOverflow <= 1, '가로 스크롤 없음 (요리 탭)', `초과 ${recipeOverflow}px`);
+    await waitToastGone();
+    await shot('14-recipe-card-390x844.png');
+
+    console.log('\n5-3) 이번 주 요리 — 제외·선택·미리보기');
+    // '집에 있음'으로 이번 주만 빼기
+    await page.locator('.recipe-card .recipe-ing .skip-btn').first().click();
+    await page.waitForFunction(
+      () => document.querySelector('#recipeStatIngredients')?.textContent?.includes('1'),
+      null,
+      { timeout: 8000 }
+    );
+    check((await page.locator('.recipe-card .recipe-ing.skipped').count()) === 1, '재료 하나를 이번 주만 제외');
+    await waitToastGone();
+    await shot('15-recipe-skip-390x844.png');
+    await page.locator('.recipe-card .recipe-ing .skip-btn').first().click();
+    await page.waitForFunction(
+      () => document.querySelector('#recipeStatIngredients')?.textContent?.includes('2'),
+      null,
+      { timeout: 8000 }
+    );
+
+    // 계획 탭에도 요리가 함께 담긴다는 안내
+    await page.click('.tabbar [data-tab="plan"]');
+    await page.waitForSelector('#screen-plan:not([hidden])');
+    check(await page.isVisible('#planRecipeLine'), '계획 화면에 요리 안내 표시');
+    check((await page.innerText('#planRecipeLine')).includes('이번 주 요리 1개'), '요리 1개 안내 문구', await page.innerText('#planRecipeLine'));
+
+    // 실행 탭 — 미리보기에 요리 재료가 함께 나오고, 같은 상품은 한 줄
+    await page.click('.tabbar [data-tab="run"]');
+    await page.waitForSelector('#screen-run:not([hidden])');
+    check(await page.isVisible('#runRecipeLine'), '실행 화면에 이번 실행 구성 표시');
+    await page.click('#previewBtn');
+    await page.waitForSelector('#previewModal:not([hidden])');
+    const recipePreview = await page.innerText('#previewBody');
+    check(/이번 주 요리 1개/.test(recipePreview), '미리보기에 요리가 포함됨', recipePreview.split('\n')[0].slice(0, 60));
+    check(/🍳/.test(recipePreview), '요리 재료 표시');
+    await page.click('#previewOk');
+
+    // 새로고침해도 요리가 남는다
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#appView:not([hidden])', { timeout: 15000 });
+    await page.click('.tabbar [data-tab="recipes"]');
+    await page.waitForSelector('.recipe-card');
+    check((await page.innerText('.recipe-card .recipe-name')) === '된장찌개', '새로고침 후 요리 유지');
+    const diskAfterRecipe = JSON.parse(
+      fs.readFileSync(path.join(process.env.DATA_DIR, 'users', fs.readdirSync(path.join(process.env.DATA_DIR, 'users')).filter((f) => f.endsWith('.json'))[0]), 'utf8')
+    );
+    check(diskAfterRecipe.recipes?.length === 1, '서버 파일에 요리 저장', `${diskAfterRecipe.recipes?.length}개`);
+
+    // 이번 주 담기 끄기 → 선택한 요리 없음, 요리만 담기 버튼 비활성
+    await page.locator('.recipe-card .switch i').first().click();
+    await page.waitForFunction(
+      () => document.querySelector('#recipeSelectedLabel')?.textContent?.includes('선택한 요리 없음'),
+      null,
+      { timeout: 8000 }
+    );
+    check(await page.locator('#recipeRunBtn').isDisabled(), '요리를 고르지 않으면 담기 버튼 비활성');
+    check((await page.locator('.recipe-card .skip-btn').count()) === 0, '선택 해제하면 집에 있음 버튼도 숨김');
+    await waitToastGone();
+    await shot('16-recipe-unselected-390x844.png');
+    await page.locator('.recipe-card .switch i').first().click();
+    await page.waitForFunction(
+      () => document.querySelector('#recipeSelectedLabel')?.textContent?.includes('된장찌개'),
+      null,
+      { timeout: 8000 }
+    );
+    check(!(await page.locator('#recipeRunBtn').isDisabled()), '다시 고르면 담기 버튼 활성');
+
+    console.log('\n5-4) 이번 주 장볼 목록 — 컬리 로그인 없이');
+    await page.click('.tabbar [data-tab="run"]');
+    await page.waitForSelector('#screen-run:not([hidden])');
+    await page.waitForSelector('#checklistList .check-item');
+    const checklistCount = await page.locator('#checklistList .check-item').count();
+    check(checklistCount === 7, '정기 5개 + 요리 재료 2개가 목록에 나온다', `${checklistCount}개`);
+    check((await page.innerText('#checklistMeta')).includes('7개'), '목록 개수·예상 금액 표시', await page.innerText('#checklistMeta'));
+
+    const firstOpen = page.locator('#checklistList .check-open').first();
+    const openHref = await firstOpen.getAttribute('href');
+    const openTarget = await firstOpen.getAttribute('target');
+    const openRel = await firstOpen.getAttribute('rel');
+    check(/^https:\/\/www\.kurly\.com\/goods\/\d+$/.test(openHref || ''), '상품 페이지로 가는 [컬리에서 열기] 버튼', openHref || '');
+    check(openTarget === '_blank' && /noopener/.test(openRel || ''), '새 탭 + noopener 로 열린다', `${openTarget} / ${openRel}`);
+    await waitToastGone();
+    await shot('17-run-checklist-390x844.png');
+
+    await page.locator('#checklistList .check-box i').first().click();
+    await page.waitForFunction(
+      () => (document.querySelector('#checklistMeta')?.textContent || '').includes('담음 1'),
+      null,
+      { timeout: 8000 }
+    );
+    check((await page.locator('#checklistList .check-item.checked').count()) === 1, '담은 상품을 체크할 수 있다');
+    await waitToastGone();
+    await shot('18-checklist-checked-390x844.png');
+
+    // 새로고침해도 체크가 남는다
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#appView:not([hidden])', { timeout: 15000 });
+    await page.waitForSelector('#checklistList .check-item');
+    await page.waitForFunction(() => document.querySelectorAll('#checklistList .check-item.checked').length === 1, null, {
+      timeout: 8000,
+    });
+    check(true, '새로고침 후에도 담음 체크가 유지됨');
+
+    await page.click('#checklistResetBtn');
+    await page.waitForFunction(
+      () => !(document.querySelector('#checklistMeta')?.textContent || '').includes('담음'),
+      null,
+      { timeout: 8000 }
+    );
+    check((await page.locator('#checklistList .check-item.checked').count()) === 0, '체크 초기화 버튼');
+
+    // 설정 — 목록 알림만 받기
+    await page.click('.tabbar [data-tab="settings"]');
+    await page.waitForSelector('#screen-settings:not([hidden])');
+    check(await page.isVisible('#checklistOnlyToggle'), '설정에 [목록 알림만 받기] 스위치');
+    await page.locator('#checklistOnlyToggle + i').click();
+    await page.waitForFunction(
+      () => (document.querySelector('#checklistOnlyState')?.textContent || '').includes('켜짐'),
+      null,
+      { timeout: 8000 }
+    );
+    check(true, '목록 알림 모드 켜기');
+
+    // 장보기 완료 — 체크와 이번 주 요리 선택을 함께 초기화
+    await page.click('.tabbar [data-tab="run"]');
+    await page.waitForSelector('#checklistList .check-item');
+    check((await page.innerText('#checklistHint')).includes('목록 알림 모드'), '목록 알림 모드 안내 문구');
+    await page.locator('#checklistList .check-box i').first().click();
+    await page.waitForFunction(
+      () => (document.querySelector('#checklistMeta')?.textContent || '').includes('담음 1'),
+      null,
+      { timeout: 8000 }
+    );
+    await page.click('#checklistDoneBtn');
+    await page.waitForFunction(() => !(document.querySelector('#checklistMeta')?.textContent || '').includes('담음'), null, {
+      timeout: 8000,
+    });
+    check((await page.locator('#checklistList .check-item.checked').count()) === 0, '장보기 완료 — 체크 초기화');
+    const itemsAfterDone = await page.locator('#checklistList .check-item').count();
+    check(itemsAfterDone === 5, '장보기 완료 — 요리 선택이 풀려 정기 5개만 남음', `${itemsAfterDone}개`);
+    await waitToastGone();
+    await shot('19-checklist-done-390x844.png');
+
+    // 목록 모드 끄기 (다음 단계 기본값 유지용)
+    await page.click('.tabbar [data-tab="settings"]');
+    await page.waitForSelector('#screen-settings:not([hidden])');
+    await page.locator('#checklistOnlyToggle + i').click();
+    await page.waitForFunction(
+      () => (document.querySelector('#checklistOnlyState')?.textContent || '').includes('꺼짐'),
+      null,
+      { timeout: 8000 }
+    );
+    await waitToastGone();
 
     console.log('\n6) 설정 탭');
     await page.click('.tabbar [data-tab="settings"]');

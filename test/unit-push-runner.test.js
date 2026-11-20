@@ -77,11 +77,12 @@ test('실행이 끝나면 이 사용자의 기기로 푸시를 보낸다 (웹훅
   assert.equal(calls[0].subscription.endpoint, sub.subscription.endpoint);
 
   const payload = JSON.parse(calls[0].payload);
-  assert.match(payload.title, /확인이 필요해요/); // 세션이 없어 실패한 실행
-  assert.match(payload.body, /정기 실행/);
+  // 세션이 없으면 실패가 아니라 '장볼 목록' 알림 — 목록이 제목·본문에 보여야 합니다.
+  assert.match(payload.title, /장볼 목록 1개가 준비됐어요/);
+  assert.match(payload.body, /정기 알림/);
   assert.match(payload.body, /유정란 15구/);
   assert.equal(payload.url, '/#run');
-  assert.match(payload.tag, /^kurly-run-/);
+  assert.match(payload.tag, /^kurly-checklist-/);
 });
 
 test('직접 실행(manual)은 "직접 실행"으로 표시된다', async () => {
@@ -93,7 +94,7 @@ test('직접 실행(manual)은 "직접 실행"으로 표시된다', async () => 
   const summary = await runCartForUser({ user, trigger: 'manual', logger: SILENT });
   assert.equal(summary.push.sent, 1);
   const payload = JSON.parse(calls[0].payload);
-  assert.match(payload.body, /직접 실행/);
+  assert.match(payload.body, /목록 준비/);
 });
 
 test('미리보기(dryRun)에는 푸시를 보내지 않는다', async () => {

@@ -29,6 +29,8 @@ const { createLogger } = require('./lib/logger');
 const { JobQueue } = require('./lib/queue');
 const { Scheduler } = require('./lib/scheduler');
 const { runCartForUser, previewPlan } = require('./lib/runner');
+const recipes = require('./lib/recipes');
+const checklist = require('./lib/checklist');
 const push = require('./lib/webpush');
 const store = require('./lib/store');
 
@@ -118,11 +120,31 @@ function kurlyStatus(user) {
 
 function planPayload(user) {
   const summary = summarizePlan(user);
+  const recipeSummary = recipes.summarizeRecipes(user);
   return {
     items: (user.items || []).map((item) => ({ ...item, quantity: computeQuantity(item) })),
     schedule: summary.schedule,
     notification: user.notification,
     summary,
+    recipes: Array.isArray(user.recipes) ? user.recipes : [],
+    recipeSettings: recipes.normalizeRecipeSettings(user.recipeSettings),
+    recipeSummary,
+    checklistOnly: user.checklistOnly === true,
+    checklistSummary: checklistBrief(user),
+  };
+}
+
+/** 목록 전체가 아니라 화면 배지용 요약만 (상품 목록은 /api/checklist) */
+function checklistBrief(user) {
+  const list = checklist.buildChecklist(user);
+  return {
+    count: list.count,
+    checkedCount: list.checkedCount,
+    remainingCount: list.remainingCount,
+    estimatedTotal: list.estimatedTotal,
+    allChecked: list.allChecked,
+    mode: list.mode,
+    mixLabel: list.mixLabel,
   };
 }
 
@@ -294,6 +316,7 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         return runCartForUser({
           user,
           trigger: job.trigger,
+          mode: job.mode || 'auto',
           onProgress: setProgress,
           logger,
         });
@@ -411,6 +434,66 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
       return u;
     });
     return sendJson(res, 200, { ok: true, plan: planPayload(updated) });
+  }
+
+  /** 요리(레시피) 목록·설정 저장 — 요리 탭에서 전체를 한 번에 보냅니다. */
+  async function handleRecipesSave(req, res, user, body) {
+    let normalized;
+    try {
+      normalized = {
+        recipes: recipes.normalizeRecipes(body?.recipes),
+        recipeSettings: recipes.normalizeRecipeSettings(body?.recipeSettings),
+      };
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+    const updated = await store.updateUser(user.userId, (u) => {
+      u.recipes = normalized.recipes;
+      u.recipeSettings = normalized.recipeSettings;
+      return u;
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      recipes: updated.recipes,
+      recipeSettings: updated.recipeSettings,
+      summary: recipes.summarizeRecipes(updated),
+      plan: planPayload(updated),
+    });
+  }
+
+  /** 담기 실행을 큐에 넣습니다. (mode: auto | combined | recipes_only | regular_only) */
+  async function enqueueRun(req, res, user, body = {}, { trigger = 'manual' } = {}) {
+    const mode = recipes.normalizeRunMode(body?.mode);
+    const active = queue.activeFor(user.userId);
+    if (active) {
+      return sendJson(res, 409, {
+        ok: false,
+        error: '이미 실행 중인 작업이 있습니다. 끝난 뒤 다시 시도해 주세요.',
+        job: { id: active.id, status: active.status, progress: active.progress },
+      });
+    }
+    const merged = recipes.mergeForRun(user, { mode });
+    if (!merged.items.length) {
+      throw new HttpError(
+        400,
+        merged.mode === 'recipes_only'
+          ? '이번 주 담기로 선택한 요리가 없습니다. 요리 탭에서 담을 요리를 골라 주세요.'
+          : '담을 상품이 없습니다. 먼저 계획에 상품을 추가해 주세요.'
+      );
+    }
+    const job = queue.enqueue({
+      type: 'run',
+      userId: user.userId,
+      trigger,
+      mode: merged.mode,
+      dedupeKey: `run:${user.userId}:${Date.now()}`,
+    });
+    return sendJson(res, 202, {
+      ok: true,
+      mode: merged.mode,
+      itemCount: merged.items.length,
+      job: { id: job.id, status: job.status, progress: job.progress },
+    });
   }
 
   async function handleKurlyConnect(req, res, user, body) {
@@ -557,6 +640,117 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         }
         if (pathname === '/api/plan' && (method === 'POST' || method === 'PUT')) {
           return await handlePlanSave(req, res, user, body);
+        }
+
+        /* ── 좋아하는 요리(메뉴) — 필수재료를 모아 장바구니에 담기 ── */
+        if (pathname === '/api/recipes' && method === 'GET') {
+          return sendJson(res, 200, {
+            ok: true,
+            recipes: user.recipes || [],
+            recipeSettings: recipes.normalizeRecipeSettings(user.recipeSettings),
+            summary: recipes.summarizeRecipes(user),
+          });
+        }
+        if (pathname === '/api/recipes' && (method === 'PUT' || method === 'POST')) {
+          return await handleRecipesSave(req, res, user, body);
+        }
+
+        /* ── 장볼 목록 (컬리 로그인 없이) — 담음 체크·컬리에서 열기 ── */
+        if (pathname === '/api/checklist' && method === 'GET') {
+          return sendJson(res, 200, {
+            ok: true,
+            checklist: checklist.buildChecklist(user),
+            checklistOnly: user.checklistOnly === true,
+            checkedAt: user.checklist?.checkedAt || null,
+            completedAt: user.checklist?.completedAt || null,
+          });
+        }
+        if (pathname === '/api/checklist/check' && method === 'POST') {
+          let checked;
+          try {
+            checked = checklist.toggleChecked(user.checklist?.checked, body?.productNo, body?.checked);
+          } catch (err) {
+            throw new HttpError(err.status || 400, err.message);
+          }
+          const updated = await store.updateUser(user.userId, (u) => {
+            u.checklist = { ...(u.checklist || {}), checked, checkedAt: Date.now() };
+            return u;
+          });
+          return sendJson(res, 200, {
+            ok: true,
+            checklist: checklist.buildChecklist(updated),
+            plan: planPayload(updated),
+          });
+        }
+        if (pathname === '/api/checklist/reset' && method === 'POST') {
+          const updated = await store.updateUser(user.userId, (u) => {
+            u.checklist = { ...(u.checklist || {}), checked: {}, checkedAt: Date.now() };
+            return u;
+          });
+          return sendJson(res, 200, { ok: true, checklist: checklist.buildChecklist(updated) });
+        }
+        // 이번 주 장보기 완료 — 담음 체크를 비우고, 설정에 따라 요리 선택도 푼다
+        if (pathname === '/api/checklist/complete' && method === 'POST') {
+          const result = checklist.completeChecklist(user);
+          const updated = await store.updateUser(user.userId, (u) => {
+            u.checklist = {
+              checked: result.checked,
+              checkedAt: Date.now(),
+              completedAt: result.completedAt,
+            };
+            u.recipes = result.recipes;
+            return u;
+          });
+          logger.info(`장보기 완료: ${user.nickname} · 요리 ${result.clearedRecipes}개 선택 해제`);
+          return sendJson(res, 200, {
+            ok: true,
+            clearedRecipes: result.clearedRecipes,
+            checklist: checklist.buildChecklist(updated),
+            plan: planPayload(updated),
+          });
+        }
+
+        /* ── 설정 — '목록 알림만 받기' ── */
+        if (pathname === '/api/settings' && (method === 'PUT' || method === 'POST')) {
+          if (body && typeof body.checklistOnly === 'boolean') {
+            const updated = await store.updateUser(user.userId, (u) => {
+              u.checklistOnly = body.checklistOnly;
+              return u;
+            });
+            return sendJson(res, 200, { ok: true, checklistOnly: updated.checklistOnly, plan: planPayload(updated) });
+          }
+          const updated = store.getUser(user.userId);
+          return sendJson(res, 200, { ok: true, checklistOnly: updated.checklistOnly === true, plan: planPayload(updated) });
+        }
+        // 요리 하나만 부분 수정/삭제 (PATCH·DELETE 는 본문 없이도 처리할 수 있게 readJson 을 미리 합니다)
+        if (/^\/api\/recipes\/[^/]+$/.test(pathname) && (method === 'PATCH' || method === 'DELETE')) {
+          const id = pathname.split('/').pop();
+          const current = Array.isArray(user.recipes) ? user.recipes : [];
+          const existing = current.find((r) => r.id === id);
+          if (!existing) throw new HttpError(404, '요리를 찾을 수 없습니다.');
+          let next;
+          if (method === 'DELETE') {
+            next = current.filter((r) => r.id !== id);
+          } else {
+            next = current.map((r) => (r.id === id ? { ...r, ...(body || {}), id } : r));
+          }
+          let normalized;
+          try {
+            normalized = recipes.normalizeRecipes(next);
+          } catch (err) {
+            throw new HttpError(400, err.message);
+          }
+          const updated = await store.updateUser(user.userId, (u) => {
+            u.recipes = normalized;
+            return u;
+          });
+          return sendJson(res, 200, {
+            ok: true,
+            recipes: updated.recipes,
+            recipeSettings: recipes.normalizeRecipeSettings(updated.recipeSettings),
+            summary: recipes.summarizeRecipes(updated),
+            plan: planPayload(updated),
+          });
         }
 
         if (pathname === '/api/items/starter' && method === 'POST') {
@@ -710,31 +904,12 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         }
 
         if (pathname === '/api/cart/preview' && method === 'GET') {
-          return sendJson(res, 200, { ok: true, preview: previewPlan(user) });
+          return sendJson(res, 200, { ok: true, preview: previewPlan(user, { mode: url.searchParams.get('mode') }) });
         }
 
-        if (pathname === '/api/cart/run-now' && method === 'POST') {
-          const active = queue.activeFor(user.userId);
-          if (active) {
-            return sendJson(res, 409, {
-              ok: false,
-              error: '이미 실행 중인 작업이 있습니다. 끝난 뒤 다시 시도해 주세요.',
-              job: { id: active.id, status: active.status, progress: active.progress },
-            });
-          }
-          if (!(user.items || []).some((i) => i.active !== false)) {
-            throw new HttpError(400, '계획에 담을 상품이 없습니다. 먼저 상품을 추가해 주세요.');
-          }
-          const job = queue.enqueue({
-            type: 'run',
-            userId: user.userId,
-            trigger: 'manual',
-            dedupeKey: `run:${user.userId}:${Date.now()}`,
-          });
-          return sendJson(res, 202, {
-            ok: true,
-            job: { id: job.id, status: job.status, progress: job.progress },
-          });
+        // 담기 실행 — mode 로 담을 범위를 고릅니다. (auto | combined | recipes_only | regular_only)
+        if ((pathname === '/api/run' || pathname === '/api/cart/run-now') && method === 'POST') {
+          return await enqueueRun(req, res, user, body);
         }
 
         if (pathname === '/api/runs' && method === 'GET') {
@@ -749,6 +924,7 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
 
         if (pathname === '/api/status' && method === 'GET') {
           const summary = summarizePlan(user);
+          const recipeSummary = recipes.summarizeRecipes(user);
           const active = queue.activeFor(user.userId);
           return sendJson(res, 200, {
             ok: true,
@@ -761,6 +937,9 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
               scheduleLabel: summary.scheduleLabel,
               schedule: summary.schedule,
             },
+            recipes: recipeSummary,
+            checklist: checklistBrief(user),
+            checklistOnly: user.checklistOnly === true,
             kurly: kurlyStatus(user),
             queue: {
               active: active

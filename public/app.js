@@ -26,6 +26,13 @@ const state = {
   search: { results: [], shown: 8, q: '' },
   editing: null,
   overrideOpen: new Set(),
+  // 요리 탭 — 편집 중인 요리와 그 안의 재료 검색 결과
+  editingRecipe: null,
+  recipeSaving: false,
+  recipeSearch: { results: [], q: '' },
+  // 이번 주 장볼 목록 (컬리 로그인 없이)
+  checklist: null,
+  checklistSaving: false,
 };
 
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
@@ -165,13 +172,14 @@ function enterApp(user, plan) {
   registerServiceWorker();
   maybeShowInstallHint();
   refreshRuns();
+  refreshChecklist();
   pollStatus().catch(() => {});
   // 설정 탭에 들어가기 전에도 푸시 상태를 미리 채워 둡니다(아이폰에서 '확인 중…' 으로 남지 않도록).
   refreshPushUI().catch(() => {});
 }
 
 function setTab(tab, { push = true } = {}) {
-  const allowed = ['plan', 'run', 'settings'];
+  const allowed = ['plan', 'recipes', 'run', 'settings'];
   const next = allowed.includes(tab) ? tab : 'plan';
   state.tab = next;
   $$('.screen').forEach((node) => {
@@ -184,13 +192,17 @@ function setTab(tab, { push = true } = {}) {
     else btn.removeAttribute('aria-current');
   });
   if (push && location.hash !== `#${next}`) history.replaceState(null, '', `#${next}`);
+  if (next === 'plan') renderSummary();
+  if (next === 'recipes') renderRecipes();
   if (next === 'run') {
     renderRun();
+    refreshChecklist();
     pollStatus().catch(() => {});
   }
   if (next === 'settings') {
     renderKurlyCard();
     refreshPushUI();
+    renderChecklistOnly();
   }
 }
 
@@ -217,7 +229,9 @@ function setPlan(plan) {
   renderPlan();
   renderSettings();
   renderSummary();
+  renderRecipes();
   renderRun();
+  refreshChecklist();
   setDirty(false);
 }
 
@@ -229,6 +243,7 @@ function renderSummary() {
   $('#statItems').textContent = `${client.activeCount}개`;
   $('#statTotal').textContent = won(client.estimatedTotal);
   $('#statEnabled').textContent = (state.plan.schedule?.enabled !== false) ? '켜짐' : '꺼짐';
+  renderMixLines();
 }
 
 function renderPlan() {
@@ -401,6 +416,675 @@ async function savePlan() {
   }
 }
 
+/* ─────────────── 요리 (좋아하는 메뉴 · 필수재료) ─────────────── */
+
+function recipeList() {
+  return Array.isArray(state.plan?.recipes) ? state.plan.recipes : [];
+}
+
+function recipeSettingsClient() {
+  return { mergeWithRegularPlan: true, clearSelectedAfterRun: true, ...(state.plan?.recipeSettings || {}) };
+}
+
+function selectedRecipesClient() {
+  return recipeList().filter((r) => r.selectedForNextRun === true);
+}
+
+const ingQty = (ingredient) => Math.min(99, Math.max(1, Math.round(Number(ingredient?.quantity) || 1)));
+
+/** 화면에서 미리 계산하는 요리 요약 (서버의 summarizeRecipes 와 같은 규칙) */
+function clientRecipeSummary() {
+  const all = recipeList();
+  const selected = selectedRecipesClient();
+  let includedIngredientCount = 0;
+  let skippedCount = 0;
+  let recipeEstimatedTotal = 0;
+  selected.forEach((recipe) => {
+    (recipe.ingredients || []).forEach((ingredient) => {
+      if (ingredient.skippedThisWeek) {
+        skippedCount += 1;
+        return;
+      }
+      includedIngredientCount += 1;
+      recipeEstimatedTotal += (Number(ingredient.price) || 0) * ingQty(ingredient);
+    });
+  });
+  return {
+    recipeCount: all.length,
+    selectedCount: selected.length,
+    selectedNames: selected.map((r) => r.name),
+    includedIngredientCount,
+    skippedCount,
+    recipeEstimatedTotal,
+  };
+}
+
+/** 이번 실행에 실제로 담기는 상품 종류 수 — 같은 상품은 한 번만 셉니다. */
+function mergedPlannedCount({ includeRecipes = null } = {}) {
+  const withRecipes =
+    includeRecipes === null ? recipeSettingsClient().mergeWithRegularPlan !== false : includeRecipes;
+  const keys = new Set();
+  activeItems().forEach((item) => keys.add(String(item.productNo)));
+  if (withRecipes) {
+    selectedRecipesClient().forEach((recipe) => {
+      (recipe.ingredients || []).forEach((ingredient) => {
+        if (!ingredient.skippedThisWeek) keys.add(String(ingredient.productNo));
+      });
+    });
+  }
+  return keys.size;
+}
+
+/** 계획·실행 화면의 "정기 4개 + 이번 주 요리 2개(재료 5개)" 줄 */
+function renderMixLines() {
+  const recipe = clientRecipeSummary();
+  const settings = recipeSettingsClient();
+  const regular = activeItems().length;
+  const merged = settings.mergeWithRegularPlan !== false;
+
+  const planLine = $('#planRecipeLine');
+  if (planLine) {
+    if (!recipe.selectedCount) {
+      planLine.hidden = true;
+      planLine.textContent = '';
+    } else {
+      const parts = [];
+      if (regular && merged) parts.push(`정기 품목 ${regular}개`);
+      parts.push(`이번 주 요리 ${recipe.selectedCount}개(재료 ${recipe.includedIngredientCount}개)`);
+      planLine.hidden = false;
+      planLine.textContent = merged
+        ? `${parts.join(' + ')} · 겹치는 상품은 한 번만 담아요`
+        : `이번 주 요리 ${recipe.selectedCount}개(재료 ${recipe.includedIngredientCount}개)는 요리 탭에서 따로 담아요`;
+    }
+  }
+
+  const runLine = $('#runRecipeLine');
+  if (runLine) {
+    if (!recipe.selectedCount) {
+      runLine.hidden = true;
+      runLine.textContent = '';
+    } else {
+      const parts = [];
+      if (regular && merged) parts.push(`정기 ${regular}개`);
+      parts.push(`이번 주 요리 ${recipe.selectedCount}개(재료 ${recipe.includedIngredientCount}개)`);
+      runLine.hidden = false;
+      runLine.textContent = merged
+        ? `이번 실행: ${parts.join(' + ')} → ${mergedPlannedCount()}개 상품`
+        : `지금 담기에 요리는 포함되지 않아요 · 요리 탭에서 따로 담기`;
+    }
+  }
+}
+
+function renderRecipes() {
+  const listNode = $('#recipeList');
+  if (!listNode) return;
+  const recipes = recipeList();
+  const selected = selectedRecipesClient();
+  const summary = clientRecipeSummary();
+  const settings = recipeSettingsClient();
+
+  $('#mergeWithPlanToggle').checked = settings.mergeWithRegularPlan !== false;
+  $('#clearAfterRunToggle').checked = settings.clearSelectedAfterRun !== false;
+
+  $('#recipeSelectedLabel').textContent = selected.length ? selected.map((r) => r.name).join(' · ') : '선택한 요리 없음';
+  $('#recipeTotalLabel').textContent = selected.length
+    ? `담을 재료 ${summary.includedIngredientCount}개 · 예상 ${won(summary.recipeEstimatedTotal)}${summary.skippedCount ? ` · 이번 주 제외 ${summary.skippedCount}개` : ''}`
+    : '요리를 고르면 재료를 한 번에 담아드려요.';
+  $('#recipeStatSelected').textContent = `${selected.length}개`;
+  $('#recipeStatIngredients').textContent = `${summary.includedIngredientCount}개`;
+  $('#recipeStatTotal').textContent = won(summary.recipeEstimatedTotal);
+  $('#recipeRunBtn').disabled = !selected.length || summary.includedIngredientCount === 0 || state.busy;
+
+  listNode.textContent = '';
+  $('#recipeEmpty').hidden = recipes.length > 0;
+  recipes.forEach((recipe) => listNode.appendChild(recipeCard(recipe)));
+
+  renderMixLines();
+}
+
+function recipeCard(recipe) {
+  const selected = recipe.selectedForNextRun === true;
+  const ingredients = recipe.ingredients || [];
+  const included = ingredients.filter((i) => !i.skippedThisWeek);
+  const skippedCount = ingredients.length - included.length;
+  const total = included.reduce((sum, i) => sum + (Number(i.price) || 0) * ingQty(i), 0);
+
+  const toggle = el('input', {
+    type: 'checkbox',
+    'aria-label': `${recipe.name} 이번 주 담기`,
+    onchange: async (event) => {
+      const checked = event.target.checked;
+      recipe.selectedForNextRun = checked;
+      renderRecipes();
+      await saveRecipes();
+      toast(
+        checked
+          ? `${recipe.name} 재료를 이번 주에 함께 담을게요.`
+          : `${recipe.name}을(를) 이번 주 담기에서 뺐어요.`
+      );
+    },
+  });
+  toggle.checked = selected;
+
+  const ingList = el('ul', { class: 'recipe-ing-chips' });
+  if (!ingredients.length) {
+    ingList.appendChild(el('li', { class: 'recipe-ing muted', text: '재료를 아직 넣지 않았어요. [수정]에서 추가해 주세요.' }));
+  }
+  ingredients.forEach((ingredient) => {
+    const skipped = ingredient.skippedThisWeek === true;
+    const children = [
+      el('span', { class: 'name', text: ingredient.name }),
+      el('span', { class: 'qty', text: `×${ingQty(ingredient)}` }),
+      el('span', { class: 'price', text: won((Number(ingredient.price) || 0) * ingQty(ingredient)) }),
+    ];
+    if (selected) {
+      children.push(
+        el('button', {
+          type: 'button',
+          class: `skip-btn${skipped ? ' on' : ''}`,
+          text: skipped ? '제외됨' : '집에 있음',
+          'aria-pressed': skipped ? 'true' : 'false',
+          onclick: async () => {
+            ingredient.skippedThisWeek = !skipped;
+            renderRecipes();
+            await saveRecipes();
+          },
+        })
+      );
+    }
+    ingList.appendChild(el('li', { class: `recipe-ing${skipped ? ' skipped' : ''}` }, children));
+  });
+
+  return el('article', { class: `recipe-card${selected ? ' selected' : ''}` }, [
+    el('div', { class: 'recipe-head' }, [
+      el('div', { class: 'recipe-title-box' }, [
+        el('p', { class: 'recipe-name', text: recipe.name }),
+        recipe.note ? el('p', { class: 'recipe-note', text: recipe.note }) : null,
+      ]),
+      el('label', { class: 'switch', title: '이번 주 담기' }, [toggle, el('i')]),
+    ]),
+    el('p', { class: 'recipe-meta' }, [
+      el('b', { text: selected ? '이번 주 담기' : '이번 주 쉼' }),
+      document.createTextNode(
+        ` · 재료 ${ingredients.length}개${skippedCount ? `(${skippedCount}개 제외)` : ''} · ${won(total)}`
+      ),
+    ]),
+    ingList,
+    el('div', { class: 'recipe-actions' }, [
+      el('button', { type: 'button', class: 'btn btn-ghost', text: '수정', onclick: () => openRecipeEditor(recipe) }),
+      el('button', {
+        type: 'button',
+        class: 'btn btn-danger-ghost',
+        text: '삭제',
+        onclick: async () => {
+          if (!confirm(`'${recipe.name}' 요리를 삭제할까요?`)) return;
+          state.plan.recipes = recipeList().filter((r) => r.id !== recipe.id);
+          renderRecipes();
+          renderSummary();
+          renderRun();
+          await saveRecipes();
+          toast(`${recipe.name}을(를) 삭제했어요.`);
+        },
+      }),
+    ]),
+  ]);
+}
+
+/** 요리 목록·설정을 서버에 저장합니다. (토글도 바로 저장) */
+async function saveRecipes({ toastMessage = null } = {}) {
+  if (!state.plan) return null;
+  if (state.recipeSaving) return null;
+  state.recipeSaving = true;
+  try {
+    const data = await api('/api/recipes', {
+      method: 'PUT',
+      body: { recipes: state.plan.recipes || [], recipeSettings: recipeSettingsClient() },
+    });
+    state.plan.recipes = data.recipes || [];
+    state.plan.recipeSettings = data.recipeSettings || state.plan.recipeSettings;
+    if (data.plan) {
+      state.plan.items = data.plan.items;
+      state.plan.summary = data.plan.summary;
+      state.plan.recipeSummary = data.plan.recipeSummary;
+      state.summary = data.plan.summary;
+    }
+    renderPlan();
+    renderSummary();
+    renderRecipes();
+    renderRun();
+    refreshChecklist();
+    if (toastMessage) toast(toastMessage);
+    return data;
+  } catch (err) {
+    toast(err.message, true);
+    return null;
+  } finally {
+    state.recipeSaving = false;
+  }
+}
+
+/* ── 요리 편집 시트 ── */
+
+function openRecipeEditor(recipe = null) {
+  state.editingRecipe = recipe
+    ? JSON.parse(JSON.stringify(recipe))
+    : { id: null, name: '', note: '', selectedForNextRun: true, ingredients: [] };
+  state.recipeSearch = { results: [], q: '' };
+  $('#recipeSheetTitle').textContent = recipe ? '요리 수정' : '새 요리';
+  $('#recipeName').value = state.editingRecipe.name || '';
+  $('#recipeNote').value = state.editingRecipe.note || '';
+  $('#recipeSearchInput').value = '';
+  $('#recipeSearchStatus').hidden = true;
+  $('#recipeSearchResults').textContent = '';
+  renderRecipeEdit();
+  $('#recipeSheet').hidden = false;
+  setTimeout(() => $('#recipeName').focus(), 150);
+}
+
+function closeRecipeEditor() {
+  $('#recipeSheet').hidden = true;
+  state.editingRecipe = null;
+  state.recipeSearch = { results: [], q: '' };
+}
+
+function renderRecipeEdit() {
+  const draft = state.editingRecipe;
+  const listNode = $('#recipeIngEdit');
+  if (!draft || !listNode) return;
+  const ingredients = draft.ingredients || [];
+  listNode.textContent = '';
+  $('#recipeIngEmpty').hidden = ingredients.length > 0;
+  $('#recipeIngCount').textContent = `${ingredients.length}개`;
+
+  ingredients.forEach((ingredient) => {
+    const thumb = ingredient.imageUrl
+      ? el('img', { src: ingredient.imageUrl, alt: '', loading: 'lazy' })
+      : el('div', { class: 'thumb' });
+    const minus = el('button', {
+      type: 'button',
+      'aria-label': `${ingredient.name} 수량 줄이기`,
+      text: '−',
+      onclick: () => {
+        const next = ingQty(ingredient) - 1;
+        if (next < 1) return;
+        ingredient.quantity = next;
+        renderRecipeEdit();
+      },
+    });
+    const plus = el('button', {
+      type: 'button',
+      'aria-label': `${ingredient.name} 수량 늘리기`,
+      text: '+',
+      onclick: () => {
+        ingredient.quantity = Math.min(99, ingQty(ingredient) + 1);
+        renderRecipeEdit();
+      },
+    });
+    listNode.appendChild(
+      el('li', { class: 'recipe-ing-row' }, [
+        thumb,
+        el('div', { class: 'info' }, [
+          el('p', { class: 'nm', text: ingredient.name }),
+          el('p', { class: 'pr', text: `${won(ingredient.price)} · ${ingredient.volume || '컬리 상품'}` }),
+          el('div', { class: 'qty-stepper' }, [minus, el('span', { text: String(ingQty(ingredient)) }), plus]),
+        ]),
+        el('button', {
+          type: 'button',
+          class: 'rm',
+          text: '빼기',
+          'aria-label': `${ingredient.name} 빼기`,
+          onclick: () => {
+            draft.ingredients = (draft.ingredients || []).filter((i) => i.id !== ingredient.id);
+            renderRecipeEdit();
+            renderRecipeResults();
+          },
+        }),
+      ])
+    );
+  });
+}
+
+function recipeHasProduct(productNo) {
+  return (state.editingRecipe?.ingredients || []).some((i) => Number(i.productNo) === Number(productNo));
+}
+
+function addIngredientFromProduct(product) {
+  const draft = state.editingRecipe;
+  if (!draft) return;
+  const existing = (draft.ingredients || []).find((i) => Number(i.productNo) === Number(product.no));
+  if (existing) {
+    existing.quantity = Math.min(99, ingQty(existing) + 1);
+    renderRecipeEdit();
+    renderRecipeResults();
+    toast(`${product.name} 수량을 늘렸어요.`);
+    return;
+  }
+  draft.ingredients = [
+    ...(draft.ingredients || []),
+    {
+      id: `ing-${product.no}-${Date.now().toString(36)}`,
+      productNo: product.no,
+      dealProductNo: null,
+      name: product.name,
+      price: Number(product.price) || 0,
+      imageUrl: product.imageUrl || null,
+      url: product.url || `https://www.kurly.com/goods/${product.no}`,
+      volume: product.shortDescription || null,
+      quantity: 1,
+      skippedThisWeek: false,
+    },
+  ];
+  renderRecipeEdit();
+  renderRecipeResults();
+  toast(`${product.name} 재료로 추가했어요.`);
+}
+
+function renderRecipeResults() {
+  const box = $('#recipeSearchResults');
+  if (!box) return;
+  box.textContent = '';
+  const results = (state.recipeSearch.results || []).slice(0, 8);
+  results.forEach((product) => {
+    const added = recipeHasProduct(product.no);
+    const thumb = product.imageUrl
+      ? el('img', { class: 'product-thumb', src: product.imageUrl, alt: '', loading: 'lazy' })
+      : el('div', { class: 'product-thumb' });
+    const addBtn = el('button', {
+      type: 'button',
+      class: 'btn btn-primary',
+      text: product.soldOut ? '품절' : added ? '추가됨 (+)' : '재료로 추가',
+      onclick: () => addIngredientFromProduct(product),
+    });
+    addBtn.disabled = Boolean(product.soldOut);
+    box.appendChild(
+      el('article', { class: 'product-card compact' }, [
+        thumb,
+        el('div', { class: 'product-body' }, [
+          el('p', { class: 'product-name', text: product.name }),
+          product.shortDescription ? el('p', { class: 'product-desc', text: product.shortDescription }) : null,
+          el('p', { class: 'product-price', text: won(product.price) }),
+          addBtn,
+        ]),
+      ])
+    );
+  });
+}
+
+async function doRecipeSearch(keyword) {
+  const q = String(keyword ?? '').trim();
+  if (!q) return;
+  state.recipeSearch.q = q;
+  const status = $('#recipeSearchStatus');
+  status.hidden = false;
+  status.className = 'search-status';
+  status.textContent = '컬리에서 재료를 찾는 중…';
+  $('#recipeSearchBtn').disabled = true;
+  try {
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    state.recipeSearch.results = data.products || [];
+    renderRecipeResults();
+    status.textContent = state.recipeSearch.results.length
+      ? `‘${q}’ 검색 결과 ${state.recipeSearch.results.length}개`
+      : `‘${q}’ 검색 결과가 없어요. 다른 재료명으로 찾아보세요.`;
+  } catch (err) {
+    state.recipeSearch.results = [];
+    renderRecipeResults();
+    status.className = 'search-status error';
+    status.textContent = err.message;
+  } finally {
+    $('#recipeSearchBtn').disabled = false;
+  }
+}
+
+async function saveRecipeEditor() {
+  const draft = state.editingRecipe;
+  if (!draft) return;
+  const name = $('#recipeName').value.trim();
+  if (!name) {
+    toast('요리 이름을 입력해 주세요.', true);
+    $('#recipeName').focus();
+    return;
+  }
+  if (!(draft.ingredients || []).length) {
+    toast('필수재료를 하나 이상 추가해 주세요.', true);
+    return;
+  }
+  const now = Date.now();
+  const recipe = {
+    ...draft,
+    name,
+    note: $('#recipeNote').value.trim(),
+    ingredients: draft.ingredients,
+    updatedAt: now,
+  };
+  const existingIndex = recipeList().findIndex((r) => r.id === recipe.id);
+  if (!recipe.id) {
+    recipe.id = `recipe-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    recipe.createdAt = now;
+  }
+  const next = recipeList().slice();
+  if (existingIndex >= 0) next[existingIndex] = recipe;
+  else next.push(recipe);
+  state.plan.recipes = next;
+  closeRecipeEditor();
+  renderRecipes();
+  renderSummary();
+  renderRun();
+  const saved = await saveRecipes();
+  if (saved) toast(existingIndex >= 0 ? `${name}을(를) 수정했어요.` : `${name}을(를) 추가했어요.`);
+}
+
+/** 선택한 요리 재료만 지금 담기 */
+async function runRecipesOnly() {
+  if (state.busy) return;
+  const summary = clientRecipeSummary();
+  if (!summary.selectedCount) {
+    toast('먼저 이번 주에 담을 요리를 선택해 주세요.', true);
+    return;
+  }
+  if (!summary.includedIngredientCount) {
+    toast('담을 재료가 없어요. [집에 있음]으로 뺀 재료를 확인해 주세요.', true);
+    return;
+  }
+  const kurly = state.status?.kurly || { status: 'disconnected' };
+  if (kurly.status !== 'connected') {
+    toast(kurly.status === 'expired' ? '컬리 로그인이 만료됐어요. 다시 연결해 주세요.' : '먼저 컬리 계정을 연결해 주세요.', true);
+    setTab('settings');
+    return;
+  }
+  setRunBusy(true, '요리 재료를 담을 준비 중…');
+  try {
+    await api('/api/run', { method: 'POST', body: { mode: 'recipes_only' } });
+    ensurePolling(true);
+    toast('선택한 요리 재료를 담기 시작했어요. 끝나면 알려드릴게요.');
+    pollStatus().catch(() => {});
+  } catch (err) {
+    setRunBusy(false);
+    if (err.status === 409) {
+      ensurePolling(true);
+      pollStatus().catch(() => {});
+      return;
+    }
+    toast(err.message, true);
+  }
+}
+
+/* ─────────────── 이번 주 장볼 목록 (컬리 로그인 없이) ─────────────── */
+
+function renderChecklist() {
+  const list = state.checklist;
+  const box = $('#checklistList');
+  if (!box) return;
+  if (!list) {
+    $('#checklistMeta').textContent = '';
+    return;
+  }
+
+  const meta = [`${list.count}개`];
+  if (list.estimatedTotal) meta.push(`예상 ${won(list.estimatedTotal)}`);
+  if (list.checkedCount) meta.push(`담음 ${list.checkedCount}`);
+  $('#checklistMeta').textContent = meta.join(' · ');
+
+  const only = state.plan?.checklistOnly === true;
+  $('#checklistHint').textContent = only
+    ? '목록 알림 모드예요. 정기 실행일에는 목록만 알려드려요. 다 담은 뒤 [이번 주 장보기 완료]를 누르면 체크와 이번 주 요리 선택이 함께 정리돼요.'
+    : '컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]로 상품을 열고, 담은 것은 체크해 두세요. 다 담으면 [이번 주 장보기 완료].';
+
+  box.textContent = '';
+  $('#checklistEmpty').hidden = list.count > 0;
+  list.items.forEach((item) => {
+    const checkbox = el('input', {
+      type: 'checkbox',
+      'aria-label': `${item.name} 담음`,
+      onchange: (event) => toggleChecklistItem(item.productNo, event.target.checked),
+    });
+    checkbox.checked = item.checked === true;
+
+    const nameLine = el('p', { class: 'check-name' }, [
+      item.source === 'recipe' ? document.createTextNode('🍳 ') : null,
+      item.source === 'both' ? document.createTextNode('🍳🧺 ') : null,
+      document.createTextNode(item.name),
+      el('span', { class: 'check-qty', text: `×${item.quantity}` }),
+    ]);
+    const subBits = [];
+    if (item.lineTotal) subBits.push(won(item.lineTotal));
+    if (item.recipeNames?.length) subBits.push(item.recipeNames.join(', '));
+    if (item.volume) subBits.push(item.volume);
+
+    box.appendChild(
+      el('li', { class: `check-item${item.checked ? ' checked' : ''}` }, [
+        el('label', { class: 'check-box', title: '담음' }, [checkbox, el('i')]),
+        el('div', { class: 'check-main' }, [
+          nameLine,
+          subBits.length ? el('p', { class: 'check-sub', text: subBits.join(' · ') }) : null,
+          el('a', {
+            class: 'check-open',
+            href: item.url || `https://www.kurly.com/goods/${item.productNo}`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            text: '컬리에서 열기 ↗',
+          }),
+        ]),
+      ])
+    );
+  });
+
+  const hasItems = list.count > 0;
+  $('#checklistResetBtn').disabled = !hasItems || state.checklistSaving;
+  $('#checklistDoneBtn').disabled = !hasItems || state.checklistSaving;
+  $('#checklistDoneBtn').textContent = list.allChecked
+    ? '이번 주 장보기 완료 ✓'
+    : '이번 주 장보기 완료';
+}
+
+async function refreshChecklist() {
+  if (!state.user) return;
+  try {
+    const data = await api('/api/checklist');
+    state.checklist = data.checklist;
+    if (state.plan) state.plan.checklistOnly = data.checklistOnly === true;
+    renderChecklist();
+  } catch {
+    /* 표시용이라 실패는 무시 */
+  }
+}
+
+async function toggleChecklistItem(productNo, checked) {
+  if (state.checklistSaving) return;
+  state.checklistSaving = true;
+  renderChecklist();
+  try {
+    const data = await api('/api/checklist/check', { method: 'POST', body: { productNo, checked } });
+    state.checklist = data.checklist;
+    if (data.plan && state.plan) state.plan.checklistSummary = data.plan.checklistSummary;
+    renderChecklist();
+  } catch (err) {
+    toast(err.message, true);
+    refreshChecklist();
+  } finally {
+    state.checklistSaving = false;
+    renderChecklist();
+  }
+}
+
+async function resetChecklist() {
+  if (state.checklistSaving) return;
+  state.checklistSaving = true;
+  try {
+    const data = await api('/api/checklist/reset', { method: 'POST', body: {} });
+    state.checklist = data.checklist;
+    renderChecklist();
+    toast('담음 체크를 초기화했어요.');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    state.checklistSaving = false;
+    renderChecklist();
+  }
+}
+
+/** 이번 주 장보기 완료 — 담음 체크를 비우고, 이번 주 요리 선택도 정리합니다. */
+async function completeShopping() {
+  if (state.checklistSaving) return;
+  const list = state.checklist;
+  const recipeCount = selectedRecipesClient().length;
+  const message = recipeCount
+    ? `이번 주 장보기를 마칠까요?\n\n담음 체크를 비우고, 이번 주 요리 선택(${recipeCount}개)도 해제해요.`
+    : '이번 주 장보기를 마칠까요?\n\n담음 체크를 모두 비워요.';
+  if (!confirm(message)) return;
+  state.checklistSaving = true;
+  try {
+    const data = await api('/api/checklist/complete', { method: 'POST', body: {} });
+    state.checklist = data.checklist;
+    if (data.plan) setPlan(data.plan);
+    renderChecklist();
+    renderRun();
+    toast(
+      data.clearedRecipes
+        ? `장보기 완료! 다음 주를 위해 요리 ${data.clearedRecipes}개 선택을 풀었어요.`
+        : '장보기 완료! 담음 체크를 비웠어요.'
+    );
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    state.checklistSaving = false;
+    renderChecklist();
+  }
+}
+
+/* ── 설정: 목록 알림만 받기 ── */
+
+function renderChecklistOnly() {
+  const toggle = $('#checklistOnlyToggle');
+  if (!toggle) return;
+  const only = state.plan?.checklistOnly === true;
+  toggle.checked = only;
+  const stateText = $('#checklistOnlyState');
+  if (stateText) {
+    stateText.textContent = only
+      ? '켜짐 — 정기 실행에 담는 대신 장볼 목록을 알려드려요'
+      : '꺼짐 — 정기 실행에 장바구니로 담아요';
+  }
+}
+
+async function saveChecklistOnly(next) {
+  try {
+    const data = await api('/api/settings', { method: 'PUT', body: { checklistOnly: next } });
+    if (state.plan) state.plan.checklistOnly = data.checklistOnly === true;
+    renderChecklistOnly();
+    renderChecklist();
+    renderRun();
+    toast(
+      next
+        ? '이제 정기 실행은 장바구니 대신 [이번 주 장볼 목록] 알림을 보내드려요.'
+        : '이제 정기 실행에 장바구니로 담아드려요.'
+    );
+  } catch (err) {
+    toast(err.message, true);
+    renderChecklistOnly();
+  }
+}
+
 /* ─────────────── 설정 ─────────────── */
 
 function renderSettings() {
@@ -413,6 +1097,7 @@ function renderSettings() {
   $('#scheduleAnchor').value = s.anchorDate ?? '';
   $('#notifyWebhook').value = n.webhookUrl ?? '';
   $('#notifyWebhookType').value = n.webhookType ?? 'auto';
+  renderChecklistOnly();
   renderKurlyCard();
 }
 
@@ -511,16 +1196,18 @@ function shortDate(ms) {
 function renderRun() {
   const s = state.status || {};
   const k = s.kurly || { status: 'disconnected' };
-  const items = activeItems();
+  const planned = mergedPlannedCount();
   const connected = k.status === 'connected';
 
   let hint = '정기 실행일을 기다리지 않고 바로 담아볼 수 있어요.';
-  if (!items.length) hint = '먼저 계획에 상품을 담아주세요.';
+  if (!planned) hint = '먼저 계획에 상품을 담거나 요리를 선택해 주세요.';
   else if (!connected) hint = '컬리 계정을 연결하면 바로 담을 수 있어요.';
   else if (state.plan?.schedule) hint = `다음 정기 실행 ${nextRunLabelFor(state.plan.schedule)}`;
   $('#runHint').textContent = hint;
 
-  $('#previewBtn').disabled = !items.length;
+  $('#previewBtn').disabled = !planned;
+  $('#runNowBtn').disabled = state.busy || !planned;
+  renderMixLines();
   renderRunHistory();
   renderKurlyCard();
 }
@@ -529,8 +1216,36 @@ function setRunBusy(busy, progressText) {
   state.busy = busy;
   $('#runProgress').hidden = !busy;
   if (busy && progressText) $('#runProgressText').textContent = progressText;
-  $('#runNowBtn').disabled = busy;
+  const planned = mergedPlannedCount();
+  $('#runNowBtn').disabled = busy || !planned;
   $('#runNowBtn').textContent = busy ? '담는 중…' : '지금 담기';
+  const recipeBtn = $('#recipeRunBtn');
+  if (recipeBtn) {
+    recipeBtn.disabled =
+      busy || !selectedRecipesClient().length || clientRecipeSummary().includedIngredientCount === 0;
+    recipeBtn.textContent = busy ? '담는 중…' : '선택한 요리 재료만 담기';
+  }
+}
+
+/** 실행 기록에 보여줄 푸시 결과 — "보냈는지, 안 보냈으면 왜"를 항상 보이게 합니다. */
+function pushStatusOf(run) {
+  const p = run?.push;
+  if (!p) return null;
+  if (p.skipped) return { cls: 'muted', text: '🔕 푸시: 등록된 기기 없음' };
+  if (Number(p.sent) > 0) {
+    const extra = [];
+    if (Number(p.failed) > 0) extra.push(`${p.failed}대 실패`);
+    if (Number(p.pruned) > 0) extra.push(`만료 ${p.pruned}대 정리`);
+    return {
+      cls: Number(p.failed) > 0 ? 'warn' : 'ok',
+      text: `🔔 푸시 ${p.sent}대 전송됨${extra.length ? ` · ${extra.join(' · ')}` : ''}`,
+    };
+  }
+  const err = p.lastError || p.error;
+  if (err) return { cls: 'bad', text: `⚠️ 푸시 실패: ${String(err).slice(0, 120)}` };
+  if (Number(p.pruned) > 0) return { cls: 'warn', text: '🔕 만료된 기기라 푸시를 보내지 못했어요 — 푸시를 껐다 다시 켜 주세요' };
+  if (Number(p.total) === 0) return { cls: 'muted', text: '🔕 푸시: 등록된 기기 없음' };
+  return { cls: 'warn', text: '⚠️ 푸시를 보내지 못했어요' };
 }
 
 function renderRunHistory() {
@@ -543,35 +1258,71 @@ function renderRunHistory() {
   runs.forEach((run, index) => {
     const failed = run.status === 'failed';
     const partial = run.status === 'partial';
+    const checklistRun = run.status === 'checklist' || run.checklistMode === true;
     const mark = failed ? 'bad' : partial ? 'warn' : 'ok';
-    const headline = failed
-      ? '실행을 마치지 못했어요'
-      : partial
-        ? `${run.added + run.merged}개 담음 · ${run.failed}개 실패`
-        : `장바구니에 ${run.added + run.merged}개 상품을 담았어요`;
+    const addedCount = (run.added || 0) + (run.merged || 0);
+    const headline = checklistRun
+      ? `장볼 목록 ${(run.items || []).length}개를 준비했어요`
+      : failed
+        ? '실행을 마치지 못했어요'
+        : partial
+          ? `${addedCount}개 담음 · ${run.failed}개 실패`
+          : `장바구니에 ${addedCount}개 상품을 담았어요`;
 
     const details = el('details', { class: 'history-entry' });
     if (index === 0) details.open = true;
+
+    const whenBits = [run.ranAtLabel || '', run.trigger === 'scheduled' ? '정기' : '직접'];
+    if (run.mode === 'recipes_only') whenBits.push('요리만');
+    else if (run.mode === 'combined') whenBits.push('정기+요리');
+    if (checklistRun) whenBits.push('목록');
+
     details.appendChild(
       el('summary', {}, [
         el('div', {}, [
-          el('div', { class: 'history-when', text: `${run.ranAtLabel || ''}${run.trigger === 'scheduled' ? ' · 정기' : ' · 직접'}` }),
+          el('div', { class: 'history-when', text: whenBits.filter(Boolean).join(' · ') }),
           el('p', { class: `history-headline ${mark}`, text: headline }),
         ]),
         el('span', { class: 'muted small', text: `${Math.max(1, Math.round((run.durationMs || 0) / 1000))}초` }),
       ])
     );
 
+    // 요리 담기/목록 알림 실행이면 구성도 함께 보여 줍니다.
+    if (checklistRun) {
+      details.appendChild(
+        el('p', {
+          class: 'history-mix',
+          text: `컬리 로그인 없이 목록으로 준비했어요 — 실행 탭에서 [컬리에서 열기]로 담아 주세요.`,
+        })
+      );
+    } else if (run.counts?.recipeCount) {
+      details.appendChild(
+        el('p', {
+          class: 'history-mix',
+          text:
+            `이번 주 요리 ${run.counts.recipeCount}개(재료 ${run.counts.recipeIngredientCount}개)` +
+            (run.counts.skipped ? ` · 집에 있음 ${run.counts.skipped}개 제외` : '') +
+            (run.counts.deduped ? ` · 겹친 상품 ${run.counts.deduped}줄은 한 번만` : ''),
+        })
+      );
+    }
+
     const list = el('ul', { class: 'history-items' });
     (run.items || []).forEach((item) => {
+      const sourceMark = item.source === 'recipe' ? '🍳 ' : item.source === 'both' ? '🍳🧺 ' : '';
       list.appendChild(
         el('li', { class: item.status === 'failed' ? 'failed' : '' }, [
           el('span', { class: 'st', text: STATUS_MARK[item.status] || '•' }),
-          el('span', { text: `${item.name} ×${item.quantity}${item.reason ? ` — ${item.reason}` : ''}` }),
+          el('span', { text: `${sourceMark}${item.name} ×${item.quantity}${item.reason ? ` — ${item.reason}` : ''}` }),
         ])
       );
     });
     details.appendChild(list);
+
+    // 푸시 결과는 늘 보이게 — 알림이 안 왔을 때 이유를 바로 알 수 있도록
+    const pushInfo = pushStatusOf(run);
+    if (pushInfo) details.appendChild(el('p', { class: `push-status ${pushInfo.cls}`, text: pushInfo.text }));
+
     if (run.error || run.cartTotalCount !== null) {
       const bits = [];
       if (run.error) bits.push(run.error);
@@ -621,6 +1372,7 @@ async function pollStatus() {
     if (state.wasActive) {
       state.wasActive = false;
       await refreshPlanAndRuns();
+      refreshChecklist();
       const last = state.status?.lastRun || state.runs[0];
       if (last) {
         if (last.status === 'success') toast(`담기 완료! ${last.added + last.merged}개 상품을 담았어요.`);
@@ -915,19 +1667,23 @@ function confirmAdd() {
 
 async function runNow() {
   if (state.busy) return;
-  if (!activeItems().length) {
-    toast('계획에 담을 상품이 없어요. 먼저 상품을 추가해 주세요.', true);
+  if (!mergedPlannedCount()) {
+    toast('담을 상품이 없어요. 계획에 상품을 담거나 요리를 선택해 주세요.', true);
     return;
   }
   const kurly = state.status?.kurly || { status: 'disconnected' };
   if (kurly.status !== 'connected') {
-    toast(kurly.status === 'expired' ? '컬리 로그인이 만료됐어요. 다시 연결해 주세요.' : '먼저 컬리 계정을 연결해 주세요.', true);
-    setTab('settings');
+    // 컬리가 연결되지 않았으면 실패가 아니라 장볼 목록으로 안내합니다.
+    toast('컬리 로그인이 없어도 괜찮아요. 아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
+    const card = $('#checklistCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    refreshChecklist();
     return;
   }
   setRunBusy(true, '실행을 준비하는 중…');
   try {
-    await api('/api/cart/run-now', { method: 'POST', body: {} });
+    // auto — '정기 실행에 함께 담기'가 켜져 있고 이번 주 요리가 있으면 정기+요리로 담습니다.
+    await api('/api/cart/run-now', { method: 'POST', body: { mode: 'auto' } });
     ensurePolling(true);
     toast('담기를 시작했어요. 끝나면 알려드릴게요.');
     pollStatus().catch(() => {});
@@ -949,17 +1705,22 @@ async function openPreview() {
     const body = $('#previewBody');
     body.textContent = '';
     if (!p.count) {
-      body.appendChild(el('p', { class: 'muted', text: '계획에 담을 상품이 없어요.' }));
+      body.appendChild(el('p', { class: 'muted', text: '담을 상품이 없어요.' }));
     } else {
       const list = el('ul', { class: 'history-items' });
       p.items.forEach((item) => {
+        const sourceMark = item.source === 'recipe' ? '🍳 ' : item.source === 'both' ? '🍳🧺 ' : '';
+        const recipeTag = item.recipeNames?.length ? ` (${item.recipeNames.join(', ')})` : '';
         list.appendChild(
           el('li', {}, [
             el('span', { class: 'st', text: '•' }),
-            el('span', { text: `${item.name} ×${item.quantity} — ${won(item.lineTotal)}` }),
+            el('span', { text: `${sourceMark}${item.name}${recipeTag} ×${item.quantity} — ${won(item.lineTotal)}` }),
           ])
         );
       });
+      if (p.mixLabel) {
+        body.appendChild(el('p', { class: 'mix-line', text: `${p.mixLabel} · 겹치는 상품은 한 번만 담아요` }));
+      }
       body.append(
         el('p', { class: 'muted small', text: `상품 ${p.count}개 · 예상 금액 ${won(p.estimatedTotal)}` }),
         list,
@@ -1517,6 +2278,44 @@ function bindEvents() {
   // 실행
   $('#runNowBtn').addEventListener('click', runNow);
   $('#previewBtn').addEventListener('click', openPreview);
+
+  // 이번 주 장볼 목록 (컬리 로그인 없이)
+  $('#checklistResetBtn').addEventListener('click', resetChecklist);
+  $('#checklistDoneBtn').addEventListener('click', completeShopping);
+  $('#checklistOnlyToggle').addEventListener('change', (e) => saveChecklistOnly(e.target.checked));
+
+  // 요리
+  $('#newRecipeBtn').addEventListener('click', () => openRecipeEditor(null));
+  $('#newRecipeEmptyBtn').addEventListener('click', () => openRecipeEditor(null));
+  $('#recipeRunBtn').addEventListener('click', runRecipesOnly);
+  $('#mergeWithPlanToggle').addEventListener('change', async (e) => {
+    state.plan.recipeSettings = { ...recipeSettingsClient(), mergeWithRegularPlan: e.target.checked };
+    renderRecipes();
+    renderSummary();
+    renderRun();
+    await saveRecipes();
+    toast(e.target.checked ? '정기 실행에 요리 재료도 함께 담을게요.' : '정기 실행은 정기 품목만 담을게요.');
+  });
+  $('#clearAfterRunToggle').addEventListener('change', async (e) => {
+    state.plan.recipeSettings = { ...recipeSettingsClient(), clearSelectedAfterRun: e.target.checked };
+    await saveRecipes();
+    toast(e.target.checked ? '담은 뒤 이번 주 요리 선택을 풀어둘게요.' : '담아도 요리 선택을 그대로 둘게요.');
+  });
+  $('#recipeCloseBtn').addEventListener('click', closeRecipeEditor);
+  $('#recipeSaveBtn').addEventListener('click', saveRecipeEditor);
+  $('#recipeName').addEventListener('input', (e) => {
+    if (state.editingRecipe) state.editingRecipe.name = e.target.value;
+  });
+  $('#recipeSearchForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    doRecipeSearch($('#recipeSearchInput').value);
+  });
+  $('#recipeQuickKeywords').addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-q]');
+    if (!chip) return;
+    $('#recipeSearchInput').value = chip.dataset.q;
+    doRecipeSearch(chip.dataset.q);
+  });
   $('#previewClose').addEventListener('click', () => { $('#previewModal').hidden = true; });
   $('#previewOk').addEventListener('click', () => { $('#previewModal').hidden = true; });
   $('#previewModal').addEventListener('click', (e) => {
@@ -1550,7 +2349,8 @@ function bindEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('#addModal').hidden) closeAddModal();
+    if (!$('#recipeSheet').hidden) closeRecipeEditor();
+    else if (!$('#addModal').hidden) closeAddModal();
     else if (!$('#previewModal').hidden) $('#previewModal').hidden = true;
     else if (!$('#searchSheet').hidden) closeSearch();
   });

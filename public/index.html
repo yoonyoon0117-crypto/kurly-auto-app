@@ -91,6 +91,7 @@
         <div class="stat"><span>예상 금액</span><b id="statTotal">0원</b></div>
         <div class="stat"><span>정기 실행</span><b id="statEnabled">켜짐</b></div>
       </div>
+      <p class="mix-line" id="planRecipeLine" hidden></p>
     </section>
 
     <button class="btn btn-primary btn-block btn-add" id="openSearchBtn" type="button">
@@ -107,6 +108,41 @@
     </div>
   </main>
 
+  <main class="screen" id="screen-recipes" data-screen="recipes" hidden>
+    <section class="card next-card recipe-summary-card">
+      <p class="eyebrow">이번 주 요리</p>
+      <strong class="next-label" id="recipeSelectedLabel">선택한 요리 없음</strong>
+      <p class="muted" id="recipeTotalLabel">요리를 고르면 재료를 한 번에 담아드려요.</p>
+      <div class="stat-row">
+        <div class="stat"><span>선택한 요리</span><b id="recipeStatSelected">0개</b></div>
+        <div class="stat"><span>담을 재료</span><b id="recipeStatIngredients">0개</b></div>
+        <div class="stat"><span>예상 금액</span><b id="recipeStatTotal">0원</b></div>
+      </div>
+      <button class="btn btn-primary btn-block recipe-run-btn" id="recipeRunBtn" type="button">선택한 요리 재료만 담기</button>
+      <div class="recipe-switches">
+        <label class="switch-row">
+          <span>정기 실행에 함께 담기</span>
+          <span class="switch"><input type="checkbox" id="mergeWithPlanToggle" checked /><i></i></span>
+        </label>
+        <label class="switch-row">
+          <span>담은 뒤 이번 주 선택 해제</span>
+          <span class="switch"><input type="checkbox" id="clearAfterRunToggle" checked /><i></i></span>
+        </label>
+      </div>
+    </section>
+
+    <button class="btn btn-soft btn-block btn-add" id="newRecipeBtn" type="button">＋ 새 요리 추가</button>
+
+    <div class="recipe-list" id="recipeList"></div>
+
+    <div class="empty card" id="recipeEmpty" hidden>
+      <p class="empty-emoji" aria-hidden="true">🍲</p>
+      <p>좋아하는 요리를 등록해 두면<br />재료를 한 번에 담아드려요.</p>
+      <p class="muted">예) 된장찌개 — 두부 · 애호박 · 대파 · 된장</p>
+      <button class="btn btn-soft btn-block" id="newRecipeEmptyBtn" type="button">첫 요리 추가하기</button>
+    </div>
+  </main>
+
   <main class="screen" id="screen-run" data-screen="run" hidden>
     <section class="card">
       <div class="row-between">
@@ -117,9 +153,24 @@
       <button class="btn btn-soft btn-block" id="gotoConnectBtn" type="button">컬리 계정 연결하기</button>
     </section>
 
+    <section class="card checklist-card" id="checklistCard">
+      <div class="row-between">
+        <h2 class="card-title flush">이번 주 장볼 목록</h2>
+        <span class="muted small" id="checklistMeta">0개</span>
+      </div>
+      <p class="muted small checklist-hint" id="checklistHint">컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]로 상품을 열고, 담은 것은 체크해 두세요.</p>
+      <ul class="checklist" id="checklistList"></ul>
+      <p class="empty-line" id="checklistEmpty">목록이 비어 있어요. 계획에 상품을 담거나 요리를 선택해 주세요.</p>
+      <div class="checklist-actions">
+        <button class="btn btn-ghost" id="checklistResetBtn" type="button">체크 초기화</button>
+        <button class="btn btn-primary" id="checklistDoneBtn" type="button">이번 주 장보기 완료</button>
+      </div>
+    </section>
+
     <section class="card run-card">
       <button class="btn btn-primary btn-block btn-lg" id="runNowBtn" type="button">지금 담기</button>
       <p class="muted center" id="runHint">정기 실행일을 기다리지 않고 바로 담아볼 수 있어요.</p>
+      <p class="mix-line center" id="runRecipeLine" hidden></p>
       <div class="progress" id="runProgress" hidden>
         <span class="spinner" aria-hidden="true"></span>
         <span id="runProgressText">실행 중…</span>
@@ -267,6 +318,15 @@
         <button class="btn btn-soft btn-block" id="pushTestBtn" type="button" disabled>테스트 알림 보내기</button>
       </div>
 
+      <div class="push-box">
+        <label class="switch-row">
+          <span>컬리 로그인 없이 목록 알림만 받기</span>
+          <span class="switch"><input type="checkbox" id="checklistOnlyToggle" /><i></i></span>
+        </label>
+        <p class="push-state" id="checklistOnlyState">꺼짐 — 정기 실행에 장바구니로 담아요</p>
+        <p class="hint push-hint">켜면 정기 실행 때 담는 대신 <b>이번 주 장볼 목록</b>을 알림으로 보내드려요. 실행 탭에서 [컬리에서 열기]로 직접 담고 [담음] 체크를 하세요. 정기 실행은 목록만 준비하고, 이번 주 요리 선택은 [이번 주 장보기 완료]를 눌렀을 때 풀려요.</p>
+      </div>
+
       <label class="field">
         <span>웹훅 URL (선택)</span>
         <input type="url" id="notifyWebhook" placeholder="Slack · Discord · ntfy 주소" inputmode="url" />
@@ -298,6 +358,7 @@
 
   <nav class="tabbar" aria-label="주요 화면">
     <button type="button" data-tab="plan" class="active" aria-current="page"><span aria-hidden="true">🧺</span>계획</button>
+    <button type="button" data-tab="recipes"><span aria-hidden="true">🍳</span>요리</button>
     <button type="button" data-tab="run"><span aria-hidden="true">🛒</span>실행</button>
     <button type="button" data-tab="settings"><span aria-hidden="true">⚙️</span>설정</button>
   </nav>
@@ -353,6 +414,52 @@
     <div class="modal-foot">
       <button class="btn btn-primary btn-block" id="previewOk" type="button">확인</button>
     </div>
+  </div>
+</div>
+
+<!-- ────────── 요리 편집 (전체 화면 시트) ────────── -->
+<div class="sheet" id="recipeSheet" hidden>
+  <header class="sheet-head recipe-sheet-head">
+    <button class="icon-btn" id="recipeCloseBtn" type="button" aria-label="닫기">←</button>
+    <h2 class="sheet-title" id="recipeSheetTitle">새 요리</h2>
+    <button class="btn btn-primary" id="recipeSaveBtn" type="button">저장</button>
+  </header>
+  <div class="sheet-body">
+    <label class="field">
+      <span>요리 이름</span>
+      <input id="recipeName" type="text" maxlength="40" placeholder="예) 된장찌개" autocomplete="off" />
+    </label>
+    <label class="field">
+      <span>메모 (선택)</span>
+      <input id="recipeNote" type="text" maxlength="100" placeholder="예) 주말 저녁에" autocomplete="off" />
+    </label>
+
+    <section class="card recipe-ing-card">
+      <div class="row-between">
+        <h3 class="card-title flush">필수재료</h3>
+        <span class="muted small" id="recipeIngCount">0개</span>
+      </div>
+      <ul class="recipe-ing-edit" id="recipeIngEdit"></ul>
+      <p class="empty-line" id="recipeIngEmpty">아직 재료가 없어요. 아래에서 컬리 상품을 검색해 추가해 주세요.</p>
+    </section>
+
+    <section class="card">
+      <h3 class="card-title">재료 검색</h3>
+      <form class="search-form recipe-search-form" id="recipeSearchForm" autocomplete="off">
+        <input type="search" id="recipeSearchInput" placeholder="예) 두부, 애호박" aria-label="재료 검색어" enterkeyhint="search" />
+        <button class="btn btn-primary" type="submit" id="recipeSearchBtn">검색</button>
+      </form>
+      <div class="quick-keywords recipe-quick" id="recipeQuickKeywords">
+        <button type="button" class="chip" data-q="두부">두부</button>
+        <button type="button" class="chip" data-q="애호박">애호박</button>
+        <button type="button" class="chip" data-q="대파">대파</button>
+        <button type="button" class="chip" data-q="된장">된장</button>
+        <button type="button" class="chip" data-q="양파">양파</button>
+        <button type="button" class="chip" data-q="감자">감자</button>
+      </div>
+      <p class="search-status" id="recipeSearchStatus" hidden></p>
+      <div class="product-list" id="recipeSearchResults"></div>
+    </section>
   </div>
 </div>
 

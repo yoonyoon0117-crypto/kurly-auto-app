@@ -8,7 +8,7 @@
  *  · push: 서버가 보낸 웹 푸시를 알림으로 표시 (iOS 16.4+ 홈 화면 앱)
  *  · notificationclick: 앱을 열거나 이미 열린 창을 앞으로 가져옵니다.
  */
-const VERSION = 'kurly-v2.1.1';
+const VERSION = 'kurly-v2.2.0';
 const SHELL = [
   '/',
   '/index.html',
