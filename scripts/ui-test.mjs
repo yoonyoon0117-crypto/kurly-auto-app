@@ -473,27 +473,6 @@ async function main() {
     const anchor = await page.inputValue('#scheduleAnchor');
     check(/^\d{4}-\d{2}-\d{2}$/.test(anchor), '기준일 자동 입력', anchor);
 
-    // 주기를 바꾸면 계획 탭의 소비량 라벨도 함께 바뀐다 (기본 1주 → 2주 → 1주)
-    await page.selectOption('#scheduleInterval', '2');
-    await page.waitForFunction(
-      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('2주마다'),
-      null,
-      { timeout: 8000 }
-    );
-    const labelTwoWeeks = await page.evaluate(
-      () => document.querySelector('.plan-consumption-label')?.textContent || ''
-    );
-    check(labelTwoWeeks.includes('2주 소비량'), '주기에 맞춘 소비량 라벨 (2주)', labelTwoWeeks);
-    await page.selectOption('#scheduleInterval', '1');
-    await page.waitForFunction(
-      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('1주마다'),
-      null,
-      { timeout: 8000 }
-    );
-    const labelOneWeek = await page.evaluate(
-      () => document.querySelector('.plan-consumption-label')?.textContent || ''
-    );
-    check(labelOneWeek.includes('1주 소비량'), '주기에 맞춘 소비량 라벨 (1주)', labelOneWeek);
 
     // 이 기기 푸시 알림 (iOS 홈 화면 앱 Web Push)
     await page.waitForFunction(() => {
@@ -515,6 +494,28 @@ async function main() {
       check(pushUi.testDisabled === true, '구독 전 테스트 알림 버튼 비활성', pushUi.hint || '');
     }
     await shot('10-settings-390x844.png');
+
+    // 주기를 바꾸면 계획 탭의 소비량 라벨도 함께 바뀐다 (기본 1주 → 2주 → 1주)
+    await page.selectOption('#scheduleInterval', '2');
+    await page.waitForFunction(
+      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('2주마다'),
+      null,
+      { timeout: 8000 }
+    );
+    const labelTwoWeeks = await page.evaluate(
+      () => document.querySelector('.plan-consumption-label')?.textContent || ''
+    );
+    check(labelTwoWeeks.includes('2주 소비량'), '주기에 맞춘 소비량 라벨 (2주)', labelTwoWeeks);
+    await page.selectOption('#scheduleInterval', '1');
+    await page.waitForFunction(
+      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('1주마다'),
+      null,
+      { timeout: 8000 }
+    );
+    const labelOneWeek = await page.evaluate(
+      () => document.querySelector('.plan-consumption-label')?.textContent || ''
+    );
+    check(labelOneWeek.includes('1주 소비량'), '주기에 맞춘 소비량 라벨 (1주)', labelOneWeek);
 
     console.log('\n7) 서비스 워커 / PWA');
     const swState = await page.evaluate(async () => {
