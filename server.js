@@ -813,9 +813,22 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         }
 
         /* ── 이 기기 푸시 알림 (iOS 홈 화면 앱 Web Push) ── */
+        // ?endpoint=… 를 주면 그 endpoint 가 이 사용자에게 아직 등록되어 있는지(registered)도 함께 알려 줍니다.
+        // 볼륨 초기화·재배포로 서버 기록이 사라져도 앱이 스스로 다시 등록할 수 있게 하기 위한 것입니다.
         if (pathname === '/api/push/vapid-key' && method === 'GET') {
           const keys = push.getVapidKeys();
-          return sendJson(res, 200, { ok: true, publicKey: keys.publicKey, source: keys.source });
+          const endpoint = String(url.searchParams.get('endpoint') || '').trim();
+          const registered =
+            endpoint.length > 0 && endpoint.length <= 2048
+              ? Boolean(push.findSubscription(user.userId, endpoint))
+              : false;
+          return sendJson(res, 200, {
+            ok: true,
+            enabled: Boolean(keys.publicKey && keys.privateKey),
+            publicKey: keys.publicKey,
+            source: keys.source,
+            registered,
+          });
         }
 
         if (pathname === '/api/push/status' && method === 'GET') {

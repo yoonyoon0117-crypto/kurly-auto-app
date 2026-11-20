@@ -54,6 +54,7 @@ test.after(async () => {
 test('푸시 API 는 로그인이 필요하다', async () => {
   for (const [method, url] of [
     ['GET', '/api/push/vapid-key'],
+    ['GET', '/api/push/vapid-key?endpoint=https%3A%2F%2Fpush.example.com%2Fx'],
     ['GET', '/api/push/status'],
     ['POST', '/api/push/subscribe'],
     ['POST', '/api/push/unsubscribe'],
@@ -75,6 +76,63 @@ test('GET /api/push/vapid-key — 저장된 공개키를 돌려준다', async ()
   assert.equal(res.body.publicKey, saved.publicKey);
   // 개인키는 절대 내보내지 않습니다.
   assert.ok(!JSON.stringify(res.body).includes(saved.privateKey));
+});
+
+test('GET /api/push/vapid-key?endpoint= — 이 기기 구독이 서버에 등록돼 있는지 알려준다', async () => {
+  const me = await register(server.baseUrl);
+  const other = await register(server.baseUrl);
+  const sub = subscriptionFor('동기화폰');
+
+  // 구독 전 — endpoint 가 없으면 registered 는 false 입니다.
+  const before = await request(server.baseUrl, '/api/push/vapid-key', { cookie: me.cookie });
+  assert.equal(before.status, 200);
+  assert.equal(before.body.ok, true);
+  assert.equal(before.body.enabled, true, '서버 푸시가 켜져 있다는 표시');
+  assert.equal(before.body.registered, false, 'endpoint 를 주지 않으면 false');
+
+  const unknown = await request(
+    server.baseUrl,
+    `/api/push/vapid-key?endpoint=${encodeURIComponent(sub.endpoint)}`,
+    { cookie: me.cookie }
+  );
+  assert.equal(unknown.status, 200);
+  assert.equal(unknown.body.registered, false, '등록되지 않은 endpoint 는 false');
+
+  await request(server.baseUrl, '/api/push/subscribe', { method: 'POST', cookie: other.cookie, body: sub });
+  const others = await request(
+    server.baseUrl,
+    `/api/push/vapid-key?endpoint=${encodeURIComponent(sub.endpoint)}`,
+    { cookie: me.cookie }
+  );
+  assert.equal(others.body.registered, false, '남의 기기 구독을 내 것으로 보면 안 됩니다.');
+
+  // 내 구독으로 등록한 뒤 — 같은 endpoint 면 registered: true.
+  await request(server.baseUrl, '/api/push/subscribe', { method: 'POST', cookie: me.cookie, body: sub });
+  const after = await request(
+    server.baseUrl,
+    `/api/push/vapid-key?endpoint=${encodeURIComponent(sub.endpoint)}`,
+    { cookie: me.cookie }
+  );
+  assert.equal(after.status, 200);
+  assert.equal(after.body.registered, true);
+  assert.equal(after.body.publicKey, before.body.publicKey, '키는 언제나 같은 값을 돌려줍니다.');
+
+  // 해지하면 다시 false — 앱이 다음에 열릴 때 다시 등록할 수 있어야 합니다.
+  await request(server.baseUrl, '/api/push/unsubscribe', {
+    method: 'POST',
+    cookie: me.cookie,
+    body: { endpoint: sub.endpoint },
+  });
+  const gone = await request(
+    server.baseUrl,
+    `/api/push/vapid-key?endpoint=${encodeURIComponent(sub.endpoint)}`,
+    { cookie: me.cookie }
+  );
+  assert.equal(gone.body.registered, false);
+
+  // 개인키는 어떤 경우에도 나가지 않습니다.
+  const saved = JSON.parse(fs.readFileSync(path.join(server.dataDir, 'vapid.json'), 'utf8'));
+  assert.ok(!JSON.stringify(gone.body).includes(saved.privateKey));
 });
 
 test('POST /api/push/subscribe — 사용자 파일에만 저장하고 같은 endpoint 는 하나로 유지', async () => {
@@ -246,7 +304,7 @@ test('POST /api/push/unsubscribe — 그 endpoint 만 지운다', async () => {
 test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리하고 설정에 푸시 UI 가 있다', async () => {
   const sw = await request(server.baseUrl, '/sw.js');
   assert.equal(sw.status, 200);
-  assert.match(sw.text, /kurly-v2\.2\.0/);
+  assert.match(sw.text, /kurly-v2\.2\.1/);
   // 새로 배포한 HTML/JS/CSS 가 홈 화면 앱을 다시 열 때 바로 반영되도록 네트워크 우선이어야 합니다.
   assert.match(sw.text, /request\.destination === 'script'/);
   assert.match(sw.text, /cache: 'no-store'/);
@@ -270,4 +328,12 @@ test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리�
   assert.match(app.text, /serviceWorker\.getRegistration/);
   assert.match(app.text, /Promise\.race/);
   assert.match(app.text, /3500/);
+  // 켜 둔 푸시가 오지 않을 때 사용자가 스위치를 꺼다 켜지 않아도 되도록 자동 동기화가 들어 있어야 합니다.
+  assert.match(app.text, /syncPushSubscriptionIfNeeded/);
+  assert.match(app.text, /\/api\/push\/vapid-key\?endpoint=/);
+  assert.match(app.text, /sameApplicationServerKey/);
+  assert.match(app.text, /resubscribePush/);
+  // refreshPushUI 와 sendTestPush 둘 다에서 조용히 맞춥니다.
+  const syncCalls = app.text.match(/syncPushSubscriptionIfNeeded\(\)/g) || [];
+  assert.ok(syncCalls.length >= 3, `syncPushSubscriptionIfNeeded 는 정의 + 화면 갱신 + 테스트 발송에서 불려야 합니다 (${syncCalls.length})`);
 });

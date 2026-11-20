@@ -1976,7 +1976,7 @@ function registerServiceWorker() {
 
 /* ─────────────── 웹 푸시 (아이폰 홈 화면 앱) ─────────────── */
 
-const pushState = { registration: null, subscription: null, busy: false };
+const pushState = { registration: null, subscription: null, busy: false, syncing: null };
 
 function isStandaloneMode() {
   return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -2096,6 +2096,101 @@ function renderPushUI() {
     : '브라우저 알림 권한을 허용해야 알림이 와요.';
 }
 
+/* ── 푸시 구독 자동 동기화 ──
+ * 켜 둔 푸시가 어느 날부터 오지 않아 '스위치를 껐다 켜기'를 해야 하는 문제를 없앱니다.
+ * 원인은 두 가지였습니다: ① 배포·볼륨 초기화로 서버에서 구독 기록이 사라짐
+ * ② 서버 VAPID 공개키가 바뀌어 이 기기 구독이 옛 키로 남아 있음(애플이 거부).
+ * 화면을 열 때·테스트 알림을 보낼 때 이 함수가 조용히 다시 맞춥니다. */
+
+/** 이 기기 구독이 만들어진 VAPID 공개키가 지금 서버 키와 같은지 (바이트 비교) */
+function sameApplicationServerKey(existing, expected) {
+  if (!existing || !expected) return true; // 브라우저가 키를 안 보여 주면 건드리지 않습니다.
+  let bytes = null;
+  try {
+    if (ArrayBuffer.isView(existing)) {
+      bytes = new Uint8Array(existing.buffer, existing.byteOffset, existing.byteLength);
+    } else if (typeof existing.byteLength === 'number') {
+      // 아이폰·다른 창에서 온 ArrayBuffer 도 같은 방식으로 읽습니다.
+      bytes = new Uint8Array(typeof existing.slice === 'function' ? existing.slice(0) : existing);
+    }
+  } catch {
+    bytes = null;
+  }
+  if (!bytes) return true;
+  if (bytes.length !== expected.length) return false;
+  for (let i = 0; i < bytes.length; i += 1) if (bytes[i] !== expected[i]) return false;
+  return true;
+}
+
+/** 이 기기 구독을 서버에 등록(같은 endpoint 는 갱신) */
+async function postPushSubscription(sub) {
+  const json = sub.toJSON();
+  await api('/api/push/subscribe', {
+    method: 'POST',
+    body: { endpoint: json.endpoint, keys: json.keys, deviceLabel: deviceLabel() },
+  });
+  pushState.subscription = sub;
+  return sub;
+}
+
+/** 이 기기를 지금 서버 키로 다시 구독합니다. (기존 구독을 해지하고 새로 만든 뒤 등록) */
+async function resubscribePush(reg, publicKey) {
+  const current = await reg.pushManager.getSubscription();
+  if (current) {
+    try {
+      await current.unsubscribe();
+    } catch {
+      /* 이미 만료된 구독이면 그대로 진행합니다 */
+    }
+  }
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey),
+  });
+  return postPushSubscription(sub);
+}
+
+/**
+ * 이 기기 구독을 서버 상태에 맞춰 조용히 동기화합니다. (실패해도 화면에 알리지 않음)
+ *  · 로컬 구독이 없으면 아무 것도 하지 않습니다(사용자가 켜면 등록).
+ *  · 서버 키가 바뀌었으면 구독을 새로 만들어 다시 등록합니다.
+ *  · 서버에 이 endpoint 기록이 없으면(볼륨 초기화·재배포) 다시 등록만 합니다.
+ * @returns {Promise<PushSubscription|null>}
+ */
+async function syncPushSubscriptionIfNeeded() {
+  if (pushState.syncing) return pushState.syncing;
+  pushState.syncing = (async () => {
+    const support = pushSupport();
+    if (!support.ok || Notification.permission !== 'granted') return null;
+    const reg = await pushRegistration();
+    if (!reg) return null;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return null;
+
+    const data = await api(`/api/push/vapid-key?endpoint=${encodeURIComponent(sub.endpoint)}`);
+    if (!data || !data.publicKey) return sub;
+
+    if (!sameApplicationServerKey(sub.options ? sub.options.applicationServerKey : null, urlBase64ToUint8Array(data.publicKey))) {
+      console.info('푸시 키가 바뀌어 이 기기 구독을 새로 만듭니다.');
+      return resubscribePush(reg, data.publicKey);
+    }
+    if (data.registered !== true) {
+      console.info('서버에 이 기기 푸시 기록이 없어 다시 등록합니다.');
+      return postPushSubscription(sub);
+    }
+    pushState.subscription = sub;
+    return sub;
+  })()
+    .catch((err) => {
+      console.warn('푸시 구독 자동 동기화 실패:', (err && err.message) || err);
+      return null;
+    })
+    .finally(() => {
+      pushState.syncing = null;
+    });
+  return pushState.syncing;
+}
+
 async function refreshPushUI() {
   if (!$('#pushToggle')) return;
   const support = pushSupport();
@@ -2112,6 +2207,11 @@ async function refreshPushUI() {
     pushState.subscription = reg ? await reg.pushManager.getSubscription() : null;
   } catch {
     pushState.subscription = null;
+  }
+  // 켜 둔 푸시가 어느 날부터 오지 않을 때 사용자가 스위치를 껐다 켜지 않아도 되도록,
+  // 이 기기 구독을 서버 기록·서버 VAPID 키와 조용히 맞춰 둡니다. (실패는 화면에 알리지 않음)
+  if (pushState.subscription && Notification.permission === 'granted') {
+    await syncPushSubscriptionIfNeeded();
   }
   renderPushUI();
 }
@@ -2136,19 +2236,19 @@ async function enablePush() {
     if (!reg) throw new Error('서비스 워커를 준비하지 못했어요. 앱을 다시 열어 주세요.');
     const data = await api('/api/push/vapid-key');
     if (!data.publicKey) throw new Error('서버의 푸시 키를 받지 못했어요.');
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
+    const current = await reg.pushManager.getSubscription();
+    if (current && !sameApplicationServerKey(current.options ? current.options.applicationServerKey : null, urlBase64ToUint8Array(data.publicKey))) {
+      // 예전 키로 만들어진 구독은 그대로 등록하면 애플이 거부합니다. 새 키로 다시 만듭니다.
+      await resubscribePush(reg, data.publicKey);
+    } else if (current) {
+      await postPushSubscription(current);
+    } else {
+      const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(data.publicKey),
       });
+      await postPushSubscription(sub);
     }
-    const json = sub.toJSON();
-    await api('/api/push/subscribe', {
-      method: 'POST',
-      body: { endpoint: json.endpoint, keys: json.keys, deviceLabel: deviceLabel() },
-    });
-    pushState.subscription = sub;
     toast('이 기기 푸시 알림을 켰어요. 테스트 알림으로 확인해 보세요.');
   } catch (err) {
     toast(err.message, true);
@@ -2187,24 +2287,37 @@ async function sendTestPush() {
   btn.disabled = true;
   const send = () => api('/api/push/test', { method: 'POST', body: {} });
   try {
+    // 보내기 전에 이 기기 구독을 서버 기록·서버 키와 조용히 맞춥니다.
+    // (스위치를 직접 껐다 켜지 않아도 되도록)
+    await syncPushSubscriptionIfNeeded();
     let result;
     try {
       result = await send();
     } catch (err) {
       // 서버 쪽 기록이 사라졌다면(볼륨 초기화 등) 이 기기 구독을 다시 등록하고 한 번 더 시도합니다.
       if (err.status !== 400 || !pushState.subscription) throw err;
-      const json = pushState.subscription.toJSON();
-      await api('/api/push/subscribe', {
-        method: 'POST',
-        body: { endpoint: json.endpoint, keys: json.keys, deviceLabel: deviceLabel() },
-      });
+      await postPushSubscription(pushState.subscription);
       result = await send();
+    }
+    // 한 대도 전달되지 않았으면(만료 정리·푸시 서버 거부) 구독을 새로 만들어 한 번 더 시도합니다.
+    if (result.sent === 0) {
+      const reg = await pushRegistration();
+      const data = await api('/api/push/vapid-key');
+      if (reg && data && data.publicKey) {
+        await resubscribePush(reg, data.publicKey);
+        const retry = await send();
+        if (retry.sent > 0) {
+          toast('테스트 알림을 보냈어요. 이 기기 푸시를 새로 연결했으니 잠시 뒤 알림을 확인해 주세요.');
+          return;
+        }
+        result = retry;
+      }
     }
     // 푸시 서버가 거부한 이유(HTTP 상태·애플 응답)를 숨기지 않고 보여 줍니다.
     const detail = result.lastError ? ` — ${String(result.lastError).slice(0, 160)}` : '';
     if (result.sent > 0) toast('테스트 알림을 보냈어요. 잠시 뒤 알림이 오는지 확인해 주세요.');
-    else if (result.pruned > 0) toast(`만료된 구독을 정리했어요. 푸시 알림을 껐다가 다시 켜 주세요.${detail}`, true);
-    else toast(`알림을 보내지 못했어요. 푸시를 껐다가 다시 켜 주세요.${detail}`, true);
+    else if (result.pruned > 0) toast(`만료된 구독을 정리하고 새 구독으로 다시 연결했습니다. [테스트 알림 보내기]를 한 번 더 눌러 주세요.${detail}`, true);
+    else toast(`알림을 보내지 못했어요.${detail}`, true);
   } catch (err) {
     toast(err.message, true);
   } finally {
