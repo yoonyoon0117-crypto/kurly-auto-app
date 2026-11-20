@@ -156,7 +156,7 @@ test('컬리 미연결 + 정기 실행 — 실패가 아니라 장볼 목록 알
   assert.equal(summary.push.sent, 1);
 
   const payload = lastPayload();
-  assert.match(payload.title, /이번 주 장볼 목록 1개가 준비됐어요/);
+  assert.equal(payload.title, '🛒 이번 주 장볼 목록을 체크할 시간이에요');
   assert.match(payload.body, /유정란 15구 ×1/);
   assert.match(payload.body, /컬리에서 열기/);
   assert.equal(payload.url, '/#run');
@@ -184,7 +184,7 @@ test('"목록 알림만 받기"를 켜면 컬리가 연결돼 있어도 담지 �
   assert.equal(summary.status, 'checklist');
   assert.equal(summary.checklist.reason, 'checklist_only');
   assert.equal(summary.sessionRefreshed, false);
-  assert.match(lastPayload().title, /장볼 목록/);
+  assert.equal(lastPayload().title, '🛒 이번 주 장볼 목록을 체크할 시간이에요');
   // 요리 선택은 담은 게 아니므로 자동으로 풀리지 않습니다.
   assert.equal(summary.recipesCleared, 0);
 });

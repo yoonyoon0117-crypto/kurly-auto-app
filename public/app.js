@@ -2108,7 +2108,7 @@ function renderPushUI() {
   toggle.checked = subscribed;
   testBtn.disabled = pushState.busy || !subscribed;
   stateText.textContent = subscribed
-    ? '켜짐 — 담기 결과를 이 기기 알림으로 보내드려요.'
+    ? '켜짐 — 이 기기 알림으로 보내드려요.'
     : '꺼짐 — 켜면 담기 결과를 잠금화면 알림으로 알려드려요.';
   hint.hidden = false;
   hint.textContent = isIOSDevice()

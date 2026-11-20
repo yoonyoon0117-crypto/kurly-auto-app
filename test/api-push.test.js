@@ -304,7 +304,7 @@ test('POST /api/push/unsubscribe — 그 endpoint 만 지운다', async () => {
 test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리하고 설정에 푸시 UI 가 있다', async () => {
   const sw = await request(server.baseUrl, '/sw.js');
   assert.equal(sw.status, 200);
-  assert.match(sw.text, /kurly-v2\.2\.2/);
+  assert.match(sw.text, /kurly-v2\.2\.3/);
   // 새로 배포한 HTML/JS/CSS 가 홈 화면 앱을 다시 열 때 바로 반영되도록 네트워크 우선이어야 합니다.
   assert.match(sw.text, /request\.destination === 'script'/);
   assert.match(sw.text, /cache: 'no-store'/);
@@ -333,6 +333,8 @@ test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리�
   assert.match(app.text, /\/api\/push\/vapid-key\?endpoint=/);
   assert.match(app.text, /sameApplicationServerKey/);
   assert.match(app.text, /resubscribePush/);
+  // 설정의 푸시 상태 문구 — 켜졌을 때 기기 알림으로 온다는 것만 짧게 알립니다.
+  assert.match(app.text, /켜짐 — 이 기기 알림으로 보내드려요/);
   // refreshPushUI 와 sendTestPush 둘 다에서 조용히 맞춥니다.
   const syncCalls = app.text.match(/syncPushSubscriptionIfNeeded\(\)/g) || [];
   assert.ok(syncCalls.length >= 3, `syncPushSubscriptionIfNeeded 는 정의 + 화면 갱신 + 테스트 발송에서 불려야 합니다 (${syncCalls.length})`);

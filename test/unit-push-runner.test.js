@@ -77,8 +77,8 @@ test('실행이 끝나면 이 사용자의 기기로 푸시를 보낸다 (웹훅
   assert.equal(calls[0].subscription.endpoint, sub.subscription.endpoint);
 
   const payload = JSON.parse(calls[0].payload);
-  // 세션이 없으면 실패가 아니라 '장볼 목록' 알림 — 목록이 제목·본문에 보여야 합니다.
-  assert.match(payload.title, /장볼 목록 1개가 준비됐어요/);
+  // 세션이 없으면 실패가 아니라 '장볼 목록' 알림 — 제목은 체크 유도 문구, 본문에 목록이 보여야 합니다.
+  assert.equal(payload.title, '🛒 이번 주 장볼 목록을 체크할 시간이에요');
   assert.match(payload.body, /정기 알림/);
   assert.match(payload.body, /유정란 15구/);
   assert.equal(payload.url, '/#run');
