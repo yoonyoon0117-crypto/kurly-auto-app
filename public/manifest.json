@@ -1,7 +1,7 @@
 {
   "name": "컬리 정기 장바구니",
   "short_name": "컬리 장바구니",
-  "description": "2주에 한 번, 먹을 만큼만 마켓컬리 장바구니에 담아두는 앱",
+  "description": "1주에 한 번, 먹을 만큼만 마켓컬리 장바구니에 담아두는 앱",
   "lang": "ko",
   "dir": "ltr",
   "start_url": "/",

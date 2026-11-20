@@ -169,7 +169,7 @@ test('미리보기는 아무것도 담지 않고 계산만 한다', async () => 
   const preview = await request(server.baseUrl, '/api/cart/preview', { cookie: a.cookie });
   assert.equal(preview.status, 200);
   assert.equal(preview.body.preview.count, 4);
-  assert.equal(preview.body.preview.estimatedTotal, 8290 * 2 + 12900 * 2 + 5990 * 2 + 10396 * 2);
+  assert.equal(preview.body.preview.estimatedTotal, 8290 + 12900 + 5990 + 10396);
 
   const runs = await request(server.baseUrl, '/api/runs', { cookie: a.cookie });
   assert.equal(runs.body.runs.length, 0, '미리보기는 실행 기록을 남기지 않습니다.');

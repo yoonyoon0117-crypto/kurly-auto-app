@@ -163,7 +163,7 @@ async function main() {
     check(loadedThumbs >= 3, '상품 이미지 표시', `${loadedThumbs}개 로드`);
 
     const qtyTexts = await page.locator('.plan-qty').allInnerTexts();
-    check(qtyTexts.length === 4 && qtyTexts.every((t) => t.startsWith('2')), '수량 자동 계산 (2개씩)', qtyTexts.join(' / '));
+    check(qtyTexts.length === 4 && qtyTexts.every((t) => t.startsWith('1')), '수량 자동 계산 (1개씩)', qtyTexts.join(' / '));
     const nextLabel = (await page.innerText('#nextRunLabel')).trim();
     check(/\(금\) 21:00$/.test(nextLabel), '다음 정기 실행 표시', nextLabel);
 
@@ -469,9 +469,31 @@ async function main() {
     await page.waitForSelector('#screen-settings:not([hidden])');
     check((await page.inputValue('#scheduleTime')) === '21:00', '기본 실행 시각 21:00');
     check((await page.inputValue('#scheduleWeekday')) === '5', '기본 요일 금요일');
-    check((await page.inputValue('#scheduleInterval')) === '2', '기본 주기 2주');
+    check((await page.inputValue('#scheduleInterval')) === '1', '기본 주기 1주');
     const anchor = await page.inputValue('#scheduleAnchor');
     check(/^\d{4}-\d{2}-\d{2}$/.test(anchor), '기준일 자동 입력', anchor);
+
+    // 주기를 바꾸면 계획 탭의 소비량 라벨도 함께 바뀐다 (기본 1주 → 2주 → 1주)
+    await page.selectOption('#scheduleInterval', '2');
+    await page.waitForFunction(
+      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('2주마다'),
+      null,
+      { timeout: 8000 }
+    );
+    const labelTwoWeeks = await page.evaluate(
+      () => document.querySelector('.plan-consumption-label')?.textContent || ''
+    );
+    check(labelTwoWeeks.includes('2주 소비량'), '주기에 맞춘 소비량 라벨 (2주)', labelTwoWeeks);
+    await page.selectOption('#scheduleInterval', '1');
+    await page.waitForFunction(
+      () => (document.querySelector('#scheduleLabel')?.textContent || '').includes('1주마다'),
+      null,
+      { timeout: 8000 }
+    );
+    const labelOneWeek = await page.evaluate(
+      () => document.querySelector('.plan-consumption-label')?.textContent || ''
+    );
+    check(labelOneWeek.includes('1주 소비량'), '주기에 맞춘 소비량 라벨 (1주)', labelOneWeek);
 
     // 이 기기 푸시 알림 (iOS 홈 화면 앱 Web Push)
     await page.waitForFunction(() => {

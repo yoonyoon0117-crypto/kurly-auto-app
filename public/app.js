@@ -2,7 +2,7 @@
 /**
  * 컬리 정기 장바구니 — 화면 로직
  *  · 로그인/회원가입(초대 코드) → 계획 · 실행 · 설정 3개 탭
- *  · 계획은 "2주 소비량 → 담을 수량" 자동 계산, 저장 버튼으로 서버에 반영
+ *  · 계획은 "1주 소비량 → 담을 수량" 자동 계산, 저장 버튼으로 서버에 반영
  *  · 실행 화면은 지금 담기 / 미리보기 / 실행 기록, 진행 상황은 /api/status 폴링
  */
 
@@ -88,6 +88,16 @@ function qtyLabel(item, qty) {
   return `${qty}${pack}`;
 }
 
+/** 지금 설정된 주기(주) — 소비량 라벨에 씁니다. 기본값은 1주 */
+function intervalWeeksNow() {
+  return Math.max(1, Math.round(Number(state.plan?.schedule?.intervalWeeks) || 1));
+}
+
+/** "1주 소비량" 처럼 주기를 붙인 문구 */
+function weekText(suffix) {
+  return `${intervalWeeksNow()}주 ${suffix}`;
+}
+
 /** 화면용 다음 실행 시각 (서버와 같은 규칙을 미리 계산해 즉시 보여줍니다) */
 function nextRunLabelFor(schedule) {
   if (!schedule) return '—';
@@ -96,7 +106,7 @@ function nextRunLabelFor(schedule) {
     `${schedule.anchorDate}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+09:00`
   );
   if (!Number.isFinite(anchor)) return '—';
-  const interval = Math.max(1, Number(schedule.intervalWeeks) || 2) * 7 * 86400000;
+  const interval = Math.max(1, Number(schedule.intervalWeeks) || 1) * 7 * 86400000;
   const now = Date.now();
   let at = anchor;
   if (now > anchor) at = anchor + Math.ceil((now - anchor) / interval) * interval;
@@ -239,7 +249,7 @@ function renderSummary() {
   if (!state.plan) return;
   const client = clientSummary();
   $('#nextRunLabel').textContent = nextRunLabelFor(state.plan.schedule);
-  $('#scheduleLabel').textContent = client.scheduleLabel || `${state.plan.schedule?.intervalWeeks || 2}주마다 ${WEEKDAY[state.plan.schedule?.weekday ?? 5]}요일 ${state.plan.schedule?.time || '21:00'} (KST)`;
+  $('#scheduleLabel').textContent = client.scheduleLabel || `${state.plan.schedule?.intervalWeeks || 1}주마다 ${WEEKDAY[state.plan.schedule?.weekday ?? 5]}요일 ${state.plan.schedule?.time || '21:00'} (KST)`;
   $('#statItems').textContent = `${client.activeCount}개`;
   $('#statTotal').textContent = won(client.estimatedTotal);
   $('#statEnabled').textContent = (state.plan.schedule?.enabled !== false) ? '켜짐' : '꺼짐';
@@ -278,7 +288,9 @@ function renderPlan() {
       step: 'any',
       inputmode: 'decimal',
       value: item.consumption,
-      'aria-label': `${item.name} 2주 소비량`,
+      class: 'plan-consumption-input',
+      'data-name': item.name,
+      'aria-label': `${item.name} ${weekText('소비량')}`,
       onchange: (e) => {
         const v = Number(e.target.value);
         item.consumption = Number.isFinite(v) && v >= 0 ? v : 0;
@@ -288,7 +300,7 @@ function renderPlan() {
     });
 
     const controls = el('div', { class: 'plan-controls' }, [
-      el('label', { text: '2주 소비량' }),
+      el('label', { class: 'plan-consumption-label', text: weekText('소비량') }),
       consumptionInput,
       el('span', { text: item.unitLabel }),
       el('span', { class: 'plan-qty', text: qtyLabel(item, qty) }),
@@ -1095,7 +1107,7 @@ function renderSettings() {
   $('#scheduleEnabled').checked = s.enabled !== false;
   $('#scheduleWeekday').value = String(s.weekday ?? 5);
   $('#scheduleTime').value = s.time ?? '21:00';
-  $('#scheduleInterval').value = String(s.intervalWeeks ?? 2);
+  $('#scheduleInterval').value = String(s.intervalWeeks ?? 1);
   $('#scheduleAnchor').value = s.anchorDate ?? '';
   $('#notifyWebhook').value = n.webhookUrl ?? '';
   $('#notifyWebhookType').value = n.webhookType ?? 'auto';
@@ -1110,7 +1122,7 @@ function readScheduleInputs() {
     enabled: $('#scheduleEnabled').checked,
     weekday: Number($('#scheduleWeekday').value),
     time: $('#scheduleTime').value || '21:00',
-    intervalWeeks: Number($('#scheduleInterval').value) || 2,
+    intervalWeeks: Number($('#scheduleInterval').value) || 1,
     anchorDate: $('#scheduleAnchor').value || state.plan.schedule?.anchorDate,
   };
   state.plan.notification = {
@@ -1129,6 +1141,14 @@ function refreshSummaryPreview() {
   $('#nextRunLabel').textContent = nextRunLabelFor(s);
   $('#scheduleLabel').textContent = `${s.intervalWeeks}주마다 ${WEEKDAY[s.weekday]}요일 ${s.time} (KST)`;
   $('#statEnabled').textContent = s.enabled !== false ? '켜짐' : '꺼짐';
+  // 주기를 바꾸면 계획 탭의 소비량 라벨도 바로 따라 바뀝니다(예: 2주 소비량).
+  const label = weekText('소비량');
+  $$('#planList .plan-consumption-label').forEach((node) => {
+    node.textContent = label;
+  });
+  $$('#planList .plan-consumption-input').forEach((node) => {
+    node.setAttribute('aria-label', `${node.dataset.name || '상품'} ${label}`);
+  });
 }
 
 function renderKurlyCard() {
@@ -1554,7 +1574,7 @@ async function openAddModal(product) {
     )
   );
   const consumptionInput = el('input', {
-    type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: e.consumption, 'aria-label': '2주 소비량',
+    type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: e.consumption, 'aria-label': weekText('소비량'),
     oninput: (ev) => {
       e.consumption = Number(ev.target.value) || 0;
       updateCalc();
@@ -1569,7 +1589,7 @@ async function openAddModal(product) {
       el('div', { text: `담을 수량 ${qty}개 = ceil(${e.consumption}${e.unitLabel} ÷ ${e.unitSize}${e.unitLabel})` }),
       el('div', {
         class: 'calc-sub',
-        text: `예상 금액 ${won((detail?.price ?? product.price ?? 0) * qty)} · 이번 2주 동안 먹을 양이에요`,
+        text: `예상 금액 ${won((detail?.price ?? product.price ?? 0) * qty)} · 이번 ${intervalWeeksNow()}주 동안 먹을 양이에요`,
       })
     );
     $('#addModalConfirm').disabled = !(e.unitSize > 0);
@@ -1610,7 +1630,7 @@ async function openAddModal(product) {
       el('div', { class: 'unit-row' }, [unitSizeInput, el('div', { class: 'small' }, [unitLabelSelect])]),
     ]),
     el('div', { class: 'field' }, [
-      el('span', { text: '2주 동안 먹는 양' }),
+      el('span', { text: weekText('동안 먹는 양') }),
       el('div', { class: 'unit-row' }, [el('div', { class: 'grow' }, [consumptionInput]), el('div', { class: 'unit-chip', text: e.unitLabel })]),
     ]),
     calcBox

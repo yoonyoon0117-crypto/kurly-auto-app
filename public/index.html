@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>컬리 정기 장바구니</title>
-<meta name="description" content="2주에 한 번, 먹을 만큼만 마켓컬리 장바구니에 담아두는 앱" />
+<meta name="description" content="1주에 한 번, 먹을 만큼만 마켓컬리 장바구니에 담아두는 앱" />
 <meta name="theme-color" content="#5F0080" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -30,7 +30,7 @@
   <div class="auth-brand">
     <img src="/icons/icon-192.png" alt="" width="72" height="72" />
     <h1>컬리 정기 장바구니</h1>
-    <p>2주에 한 번, 먹을 만큼만<br />마켓컬리 장바구니에 담아둘게요.</p>
+    <p>1주에 한 번, 먹을 만큼만<br />마켓컬리 장바구니에 담아둘게요.</p>
   </div>
 
   <form class="card auth-form" id="authForm" autocomplete="on" novalidate>
@@ -85,7 +85,7 @@
     <section class="card next-card">
       <p class="eyebrow">다음 정기 실행</p>
       <strong class="next-label" id="nextRunLabel">—</strong>
-      <p class="muted" id="scheduleLabel">2주마다 금요일 21:00 (KST)</p>
+      <p class="muted" id="scheduleLabel">1주마다 금요일 21:00 (KST)</p>
       <div class="stat-row">
         <div class="stat"><span>담을 상품</span><b id="statItems">0개</b></div>
         <div class="stat"><span>예상 금액</span><b id="statTotal">0원</b></div>
@@ -103,7 +103,7 @@
     <div class="empty card" id="planEmpty" hidden>
       <p class="empty-emoji" aria-hidden="true">🧺</p>
       <p>아직 담은 상품이 없어요.</p>
-      <p class="muted">2주 동안 먹는 양을 적어두면, 그때마다 알아서 장바구니에 담아드려요.</p>
+      <p class="muted">1주 동안 먹는 양을 적어두면, 그때마다 알아서 장바구니에 담아드려요.</p>
       <button class="btn btn-soft btn-block" id="loadStarterBtn" type="button">기본 4개 상품 불러오기</button>
     </div>
   </main>
@@ -302,7 +302,7 @@
           <input type="date" id="scheduleAnchor" />
         </label>
       </div>
-      <p class="hint">기준일부터 정확히 주기(기본 14일) 간격으로 실행돼요. 서버가 잠깐 꺼져 있었다면 실행 시각 후 6시간 안에 한 번 따라잡습니다.</p>
+      <p class="hint">기준일부터 정확히 주기(기본 7일) 간격으로 실행돼요. 서버가 잠깐 꺼져 있었다면 실행 시각 후 6시간 안에 한 번 따라잡습니다.</p>
     </section>
 
     <section class="card">

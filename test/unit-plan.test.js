@@ -39,12 +39,12 @@ test('일정 기본값과 설명', () => {
   assert.equal(s.enabled, true);
   assert.equal(s.weekday, 5);
   assert.equal(s.time, '21:00');
-  assert.equal(s.intervalWeeks, 2);
+  assert.equal(s.intervalWeeks, 1);
   assert.equal(s.timezone, 'Asia/Seoul');
   // 다음 금요일(2026-11-20)
   assert.equal(s.anchorDate, '2026-11-20');
   assert.equal(nextWeekdayDate(5, now), '2026-11-20');
-  assert.equal(describeSchedule(s), '2주마다 금요일 21:00 (KST)');
+  assert.equal(describeSchedule(s), '1주마다 금요일 21:00 (KST)');
 });
 
 test('2주 간격 다음 실행 시각 계산', () => {
@@ -114,7 +114,7 @@ test('계획 검증 — 잘못된 입력은 거부', () => {
   assert.throws(() => normalizePlanInput({ items: [], notification: { webhookUrl: 'ftp://x' } }), /웹훅/);
 
   const defaults = normalizePlanInput({ items: [] });
-  assert.equal(defaults.schedule.intervalWeeks, 2);
+  assert.equal(defaults.schedule.intervalWeeks, 1);
   assert.equal(defaults.schedule.weekday, 5);
 });
 

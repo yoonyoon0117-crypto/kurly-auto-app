@@ -55,7 +55,7 @@ test('회원가입 성공: HttpOnly 세션 쿠키 + 사용자별 파일 + 기본
   assert.equal(res.body.user.nickname, '앰버');
   assert.ok(!('password' in res.body.user), '사용자 응답에 비밀번호 해시가 없어야 합니다.');
   assert.equal(res.body.plan.items.length, 4);
-  assert.equal(res.body.plan.items[0].quantity, 2);
+  assert.equal(res.body.plan.items[0].quantity, 1);
 
   const setCookie = res.setCookies.join('; ');
   assert.match(setCookie, /kurly_sid=/);
