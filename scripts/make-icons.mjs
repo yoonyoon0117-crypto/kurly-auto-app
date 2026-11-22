@@ -4,11 +4,23 @@
  *   public/icons/icon-192.png, icon-512.png, maskable-512.png, apple-touch-icon.png
  *
  *  흰색 장바구니 글리프 + 보라색 그라데이션 배경. 4배 슈퍼샘플링으로 가장자리를 부드럽게 만듭니다.
+ *
+ *  ⚠️ v2.3.6 부터 실제 홈 화면 아이콘은 파스텔 민트 새싹 바구니 + 시계 배지 그림입니다.
+ *     이 스크립트를 실행하면 그 그림이 옛 보라색 장바구니로 되돌아갑니다.
+ *     정말 되돌리려면 `node scripts/make-icons.mjs --force` 로 실행하세요.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+
+if (!process.argv.includes('--force')) {
+  console.error(
+    '[make-icons] v2.3.6 부터 아이콘은 파스텔 그림입니다. 실행하면 그 그림을 덮어씁니다.\n' +
+      '[make-icons] 정말 옛 보라색 아이콘으로 되돌리려면 --force 를 붙여 실행하세요.'
+  );
+  process.exit(1);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(__dirname, '..', 'public', 'icons');
