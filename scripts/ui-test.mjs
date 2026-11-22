@@ -576,11 +576,12 @@ async function main() {
     check((await oasisOpen.innerText()).includes('오아시스에서 열기'), '오아시스 상품은 [오아시스에서 열기]');
     const oasisHref = await oasisOpen.getAttribute('href');
     // 아이폰: /appLink 화면(5초 뒤 App Store 로 넘어감)을 거치지 않고 oasiskr:// 로 바로
+    // 오아시스는 자기 링크에 매번 새 7자리 v= 를 붙인다 — 앱이 이미 열려 있어도 새 상품으로 넘어가는 값
     check(
-      /^oasiskr:\/\/deeplink\?menu=page&nextUrl=%252Fproduct%252Fdetail%252F\d+&loginyn=N&data=$/.test(
+      /^oasiskr:\/\/deeplink\?menu=page&nextUrl=%252Fproduct%252Fdetail%252F\d+&loginyn=N&v=\d{7}&data=$/.test(
         oasisHref || ''
       ),
-      '아이폰 오아시스 상품은 oasiskr:// 딥링크로 연결',
+      '아이폰 오아시스 상품은 v= 값이 붙은 oasiskr:// 딥링크로 연결',
       oasisHref || ''
     );
     const appLinkPath = decodeURIComponent(decodeURIComponent((oasisHref || '').split('nextUrl=')[1]?.split('&')[0] || ''));
@@ -592,6 +593,48 @@ async function main() {
     check(
       (await oasisOpen.getAttribute('target')) === null && (await oasisOpen.getAttribute('rel')) === null,
       '아이폰 앱 스킴 링크에는 target·rel 을 붙이지 않는다 (빈 탭 방지)'
+    );
+
+    // 누를 때마다 v= 를 새로 만든다 — 목록을 다시 그리지 않고 같은 버튼을 두 번 눌러도
+    // 오아시스 앱이 앞서 연 상품(유정란)에 머물지 않고 그 상품(사과)으로 이동해야 한다.
+    const deeplinkV = (href) => (String(href || '').match(/[?&]v=(\d+)&data=/) || [])[1] || '';
+    const deeplinkPath = (href) =>
+      decodeURIComponent(decodeURIComponent(String(href || '').split('nextUrl=')[1]?.split('&')[0] || ''));
+    const taps = await page.evaluate(() => {
+      const a = document.querySelector('#checklistList .check-open');
+      // 테스트가 실제로 oasiskr:// 로 이동하지 않도록 기본 동작만 막는다 (앱 쪽 핸들러는 그대로 실행)
+      a.addEventListener('click', (event) => event.preventDefault(), { capture: true });
+      const read = () => a.getAttribute('href');
+      const first = read();
+      a.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      const second = read();
+      a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const third = read();
+      return { first, second, third };
+    });
+    check(
+      /^\d{7}$/.test(deeplinkV(taps.first)) &&
+        /^\d{7}$/.test(deeplinkV(taps.second)) &&
+        /^\d{7}$/.test(deeplinkV(taps.third)),
+      '딥링크 v= 는 7자리 숫자',
+      `${deeplinkV(taps.first)} / ${deeplinkV(taps.second)} / ${deeplinkV(taps.third)}`
+    );
+    check(
+      deeplinkV(taps.first) !== deeplinkV(taps.second) && deeplinkV(taps.second) !== deeplinkV(taps.third),
+      '버튼을 누를 때마다 v= 가 새로 만들어진다',
+      `${deeplinkV(taps.first)} → ${deeplinkV(taps.second)} → ${deeplinkV(taps.third)}`
+    );
+    check(
+      [taps.first, taps.second, taps.third].every((href) => deeplinkPath(href) === appLinkPath),
+      'v= 가 바뀌어도 딥링크는 같은 상품을 가리킨다',
+      taps.third
+    );
+    check(
+      /^oasiskr:\/\/deeplink\?menu=page&nextUrl=%252Fproduct%252Fdetail%252F\d+&loginyn=N&v=\d{7}&data=$/.test(
+        taps.third
+      ),
+      '누른 뒤에도 오아시스 형식 그대로',
+      taps.third
     );
 
     // 다른 기기: 안드로이드는 /appLink, PC 는 상품 웹 페이지 — 렌더 결과까지 확인

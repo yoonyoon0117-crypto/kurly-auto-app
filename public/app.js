@@ -118,13 +118,37 @@ function oasisDetailPath(webUrl, productNo) {
 }
 
 /**
- * 오아시스 앱 딥링크(oasiskr://) — m.oasis.co.kr/appLink 화면이 앱에 넘기는 주소 그대로입니다.
- *   oasiskr://deeplink?menu=page&nextUrl={경로를 두 번 인코딩}&loginyn=N&data=
+ * 오아시스 앱 딥링크의 v= 값 — 오아시스 /appLink 화면이 매번 새로 넣는 7자리 숫자입니다.
+ * 앱이 이미 열려 있을 때 같은 주소를 다시 넘기면 앱이 지금 화면에 그대로 머무르므로,
+ * 주소가 매번 달라지도록 이 값을 새로 만듭니다.
  */
-function oasisIOSAppUrl(webUrl, productNo) {
+function oasisDeeplinkVersion() {
+  return Math.floor(1000000 + Math.random() * 9000000);
+}
+
+/**
+ * 오아시스 앱 딥링크(oasiskr://) — m.oasis.co.kr/appLink 화면이 앱에 넘기는 주소 그대로입니다.
+ *   oasiskr://deeplink?menu=page&nextUrl={경로를 두 번 인코딩}&loginyn=N&v={7자리}&data=
+ */
+function oasisIOSAppUrl(webUrl, productNo, version = oasisDeeplinkVersion()) {
   const path = oasisDetailPath(webUrl, productNo);
   if (!path) return null;
-  return `oasiskr://deeplink?menu=page&nextUrl=${encodeURIComponent(encodeURIComponent(path))}&loginyn=N&data=`;
+  return `oasiskr://deeplink?menu=page&nextUrl=${encodeURIComponent(encodeURIComponent(path))}&loginyn=N&v=${version}&data=`;
+}
+
+/**
+ * oasiskr:// 링크의 v= 를 누를 때마다 새로 만듭니다.
+ * 목록을 다시 그리지 않고 같은 링크를 두 번 누르거나(또는 앞서 누른 상품이 앱에 열려 있는 채로
+ * 다른 상품을 눌러도) 오아시스 앱이 예전 화면에 머무르지 않도록, 손가락이 닿는 순간 주소를 바꿔 둡니다.
+ */
+function attachFreshDeepLink(link, webUrl, productNo) {
+  const refresh = () => {
+    const fresh = oasisIOSAppUrl(webUrl, productNo);
+    if (fresh && fresh !== link.getAttribute('href')) link.setAttribute('href', fresh);
+  };
+  ['pointerdown', 'touchstart', 'mousedown', 'click'].forEach((type) =>
+    link.addEventListener(type, refresh, { passive: true })
+  );
 }
 
 /**
@@ -1177,21 +1201,25 @@ function renderChecklist() {
       productPageUrl(itemMarket, item.productNo);
     const appScheme = isOasis && isAppSchemeUrl(openHref);
 
+    // 오아시스는 휴대폰에서만 앱으로 보냅니다 (PC 에서는 상품 페이지 그대로).
+    // 아이폰 oasiskr:// 링크에는 target 을 붙이지 않습니다 — 빈 탭이 함께 열립니다.
+    const openLink = el('a', {
+      class: `check-open${isOasis ? ' oasis' : ''}`,
+      href: openHref,
+      target: appScheme ? null : '_blank',
+      rel: appScheme ? null : 'noopener noreferrer',
+      text: isOasis ? '오아시스에서 열기 ↗' : '컬리에서 열기 ↗',
+    });
+    // 앱이 이미 열려 있어도 누를 때마다 새 상품으로 이동하도록 v= 를 갱신합니다.
+    if (appScheme) attachFreshDeepLink(openLink, item.url, item.productNo);
+
     box.appendChild(
       el('li', { class: `check-item${item.checked ? ' checked' : ''}${isOasis ? ' oasis' : ''}` }, [
         el('label', { class: 'check-box', title: '담음' }, [checkbox, el('i')]),
         el('div', { class: 'check-main' }, [
           nameLine,
           subBits.length ? el('p', { class: 'check-sub', text: subBits.join(' · ') }) : null,
-          el('a', {
-            class: `check-open${isOasis ? ' oasis' : ''}`,
-            // 오아시스는 휴대폰에서만 앱으로 보냅니다 (PC 에서는 상품 페이지 그대로).
-            // 아이폰 oasiskr:// 링크에는 target 을 붙이지 않습니다 — 빈 탭이 함께 열립니다.
-            href: openHref,
-            target: appScheme ? null : '_blank',
-            rel: appScheme ? null : 'noopener noreferrer',
-            text: isOasis ? '오아시스에서 열기 ↗' : '컬리에서 열기 ↗',
-          }),
+          openLink,
         ]),
       ])
     );
