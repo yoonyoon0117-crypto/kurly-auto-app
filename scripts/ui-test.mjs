@@ -126,6 +126,17 @@ async function main() {
       (await page.getAttribute('meta[name="apple-mobile-web-app-capable"]', 'content')) === 'yes',
       'iOS 홈 화면 추가 메타 태그'
     );
+    check(
+      (await page.getAttribute('meta[name="apple-mobile-web-app-title"]', 'content')) === 'Cart helper🤍',
+      '홈 화면 추가 이름',
+      (await page.getAttribute('meta[name="apple-mobile-web-app-title"]', 'content')) || ''
+    );
+    const authSubtitle = (await page.textContent('.auth-brand p')) || '';
+    check(
+      authSubtitle.includes('장바구니에 담아둘게요.') && !authSubtitle.includes('마켓컬리'),
+      '로그인 화면 부제 — 마켓 이름 없이',
+      authSubtitle.replace(/\s+/g, ' ').trim()
+    );
     await shot('01-login-390x844.png');
 
     console.log('\n2) 회원가입 (초대 코드)');

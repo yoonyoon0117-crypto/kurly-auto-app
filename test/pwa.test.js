@@ -32,8 +32,10 @@ test('앱 껍데기(/) — iOS PWA 메타 태그와 매니페스트 링크', asy
   assert.match(res.text, /<html lang="ko">/);
   assert.match(res.text, /rel="manifest" href="\/manifest.json"/);
   assert.match(res.text, /apple-mobile-web-app-capable" content="yes"/);
-  assert.match(res.text, /apple-mobile-web-app-title/);
+  assert.match(res.text, /apple-mobile-web-app-title" content="Cart helper🤍"/);
   assert.match(res.text, /rel="apple-touch-icon" href="\/icons\/apple-touch-icon.png"/);
+  // 로그인 화면 부제는 마켓 이름 없이
+  assert.match(res.text, /1주에 한 번, 먹을 만큼만<br \/>장바구니에 담아둘게요\./);
   assert.match(res.text, /name="theme-color" content="#5F0080"/);
   assert.match(res.text, /viewport-fit=cover/);
 
@@ -47,7 +49,8 @@ test('PWA 매니페스트 — 설치 조건(이름·standalone·192/512 아이�
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /application\/json/);
   const manifest = JSON.parse(res.text);
-  assert.equal(manifest.name, '정기 장바구니');
+  assert.equal(manifest.name, 'Cart helper🤍');
+  assert.equal(manifest.short_name, 'Cart helper🤍');
   assert.equal(manifest.lang, 'ko');
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/');
