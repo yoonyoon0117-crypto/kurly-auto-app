@@ -152,10 +152,10 @@ function checklistBrief(user) {
 /* ─────────────── 사용자 데이터 변경 도우미 ─────────────── */
 
 async function addStarterItems(user) {
-  const existing = new Set(
-    (user.items || []).map((i) => `${i.productNo}:${i.optionName || ''}`)
-  );
-  const toAdd = starterItems(user.userId).filter((i) => !existing.has(`${i.productNo}:${i.optionName || ''}`));
+  // 마켓마다 상품번호 체계가 달라서 키에 마켓을 함께 넣습니다. (컬리 100번 ≠ 오아시스 100번)
+  const keyOf = (i) => `${normalizeMarket(i.market)}:${i.productNo}:${i.optionName || ''}`;
+  const existing = new Set((user.items || []).map(keyOf));
+  const toAdd = starterItems(user.userId).filter((i) => !existing.has(keyOf(i)));
   if (!toAdd.length) return { added: 0, user };
   const updated = await store.updateUser(user.userId, (u) => {
     u.items = [...(u.items || []), ...toAdd];

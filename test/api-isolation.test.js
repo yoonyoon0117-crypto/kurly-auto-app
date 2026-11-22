@@ -168,8 +168,12 @@ test('미리보기는 아무것도 담지 않고 계산만 한다', async () => 
   const a = await register(server.baseUrl, { nickname: '미리보기', password: 'password123', loadStarter: true });
   const preview = await request(server.baseUrl, '/api/cart/preview', { cookie: a.cookie });
   assert.equal(preview.status, 200);
-  assert.equal(preview.body.preview.count, 4);
-  assert.equal(preview.body.preview.estimatedTotal, 8290 + 12900 + 5990 + 10396);
+  // 기본 8개(컬리 4 + 오아시스 4) 모두 이번 주 장볼 목록에 들어갑니다. (자동 담기는 컬리만)
+  assert.equal(preview.body.preview.count, 8);
+  assert.equal(
+    preview.body.preview.estimatedTotal,
+    8290 + 12900 + 5990 + 10396 + 11600 + 11800 + 4620 + 6950
+  );
 
   const runs = await request(server.baseUrl, '/api/runs', { cookie: a.cookie });
   assert.equal(runs.body.runs.length, 0, '미리보기는 실행 기록을 남기지 않습니다.');

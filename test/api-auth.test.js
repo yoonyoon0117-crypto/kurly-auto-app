@@ -48,14 +48,19 @@ test('회원가입: 잘못된 초대 코드·형식 오류는 거부', async () 
   assert.equal(spaceNick.status, 400);
 });
 
-test('회원가입 성공: HttpOnly 세션 쿠키 + 사용자별 파일 + 기본 4개 상품', async () => {
+test('회원가입 성공: HttpOnly 세션 쿠키 + 사용자별 파일 + 기본 8개 상품', async () => {
   const res = await register(server.baseUrl, { nickname: '앰버', password: 'password123', loadStarter: true });
   assert.equal(res.status, 201);
   assert.equal(res.body.ok, true);
   assert.equal(res.body.user.nickname, '앰버');
   assert.ok(!('password' in res.body.user), '사용자 응답에 비밀번호 해시가 없어야 합니다.');
-  assert.equal(res.body.plan.items.length, 4);
+  assert.equal(res.body.plan.items.length, 8);
   assert.equal(res.body.plan.items[0].quantity, 1);
+  // 컬리 4개 + 오아시스 4개
+  assert.deepEqual(
+    res.body.plan.items.map((i) => i.market).sort(),
+    ['kurly', 'kurly', 'kurly', 'kurly', 'oasis', 'oasis', 'oasis', 'oasis']
+  );
 
   const setCookie = res.setCookies.join('; ');
   assert.match(setCookie, /kurly_sid=/);
@@ -79,7 +84,7 @@ test('회원가입 성공: HttpOnly 세션 쿠키 + 사용자별 파일 + 기본
   const me = await request(server.baseUrl, '/api/auth/me', { cookie: res.cookie });
   assert.equal(me.status, 200);
   assert.equal(me.body.user.userId, userId);
-  assert.equal(me.body.plan.items.length, 4);
+  assert.equal(me.body.plan.items.length, 8);
 });
 
 test('닉네임 중복(대소문자 무시)은 409', async () => {
@@ -204,9 +209,9 @@ test('다른 사이트에서 보낸 상태 변경 요청은 403 (CSRF 보조)', 
 
 test('기본 상품 다시 불러오기 — 중복은 늘지 않는다', async () => {
   const res = await register(server.baseUrl, { nickname: '기본상품', password: 'password123', loadStarter: true });
-  assert.equal(res.body.plan.items.length, 4);
+  assert.equal(res.body.plan.items.length, 8);
   const again = await request(server.baseUrl, '/api/items/starter', { method: 'POST', cookie: res.cookie, body: {} });
   assert.equal(again.status, 200);
   assert.equal(again.body.added, 0);
-  assert.equal(again.body.plan.items.length, 4);
+  assert.equal(again.body.plan.items.length, 8);
 });
