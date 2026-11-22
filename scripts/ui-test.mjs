@@ -533,6 +533,7 @@ async function main() {
       (await oasisPlanItem.locator('.market-badge').innerText()).trim() === '오아시스',
       '계획 상품에도 오아시스 배지'
     );
+    const oasisPlanWebHref = await oasisPlanItem.locator('a[href^="https://m.oasis.co.kr"]').first().getAttribute('href');
     check(
       (await page.locator('.plan-item').count()) === 1,
       '계획 탭은 고른 마켓(오아시스) 품목만 보여 준다',
@@ -574,7 +575,22 @@ async function main() {
     const oasisOpen = page.locator('#checklistList .check-open').first();
     check((await oasisOpen.innerText()).includes('오아시스에서 열기'), '오아시스 상품은 [오아시스에서 열기]');
     const oasisHref = await oasisOpen.getAttribute('href');
-    check(/^https:\/\/m\.oasis\.co\.kr\/product\/detail\/\d+$/.test(oasisHref || ''), '오아시스 상품 페이지로 연결', oasisHref || '');
+    check(
+      /^https:\/\/m\.oasis\.co\.kr\/appLink\?r=%2Fproduct%2Fdetail%2F\d+$/.test(oasisHref || ''),
+      '오아시스 상품은 앱 딥링크(appLink)로 연결',
+      oasisHref || ''
+    );
+    const appLinkPath = decodeURIComponent((oasisHref || '').split('r=')[1] || '');
+    check(
+      /^\/product\/detail\/\d+$/.test(appLinkPath) && (oasisPlanWebHref || '').endsWith(appLinkPath),
+      'appLink 경로가 계획에 담긴 그 상품의 웹 주소와 같다',
+      `${appLinkPath} / ${oasisPlanWebHref}`
+    );
+    check(
+      /^https:\/\/m\.oasis\.co\.kr\/product\/detail\/\d+$/.test(oasisPlanWebHref || ''),
+      '품목 이름 링크는 그대로 상품 웹 페이지',
+      oasisPlanWebHref || ''
+    );
     check(
       await page.evaluate(() =>
         document.querySelector('#checklistList .check-item')?.classList.contains('oasis')

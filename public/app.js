@@ -85,6 +85,39 @@ function productPageUrl(market, productNo) {
     : `https://www.kurly.com/goods/${no}`;
 }
 
+/** 휴대폰(아이폰·아이패드·안드로이드)에서 열었는지 — 앱 딥링크는 여기서만 씁니다 */
+function isMobileDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod|Android/i.test(ua)) return true;
+  // 최신 아이패드는 사파리에서 데스크톱(Macintosh)으로 보이므로 터치 여부로 함께 판단합니다.
+  return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+}
+
+/** 오아시스 상품 페이지 주소에서 '/product/detail/{번호}' 경로만 뽑습니다 */
+function oasisDetailPath(webUrl, productNo) {
+  try {
+    const parsed = new URL(String(webUrl || ''), 'https://m.oasis.co.kr');
+    if (/(^|\.)oasis\.co\.kr$/i.test(parsed.hostname) && /^\/product\/detail\/\d+/.test(parsed.pathname)) {
+      return parsed.pathname;
+    }
+  } catch {
+    /* 주소를 읽을 수 없으면 상품번호로 만듭니다 */
+  }
+  if (productNo === undefined || productNo === null || productNo === '') return '';
+  return `/product/detail/${Number(productNo) || productNo}`;
+}
+
+/**
+ * 오아시스 앱으로 열기 — 오아시스는 유니버설 링크(apple-app-site-association)가 없어
+ * 상품 주소를 직접 열면 사파리에 머뭅니다. 오아시스가 자기 앱 딥링크에 쓰는
+ * /appLink?r=... 를 거치면 iOS 는 oasiskr://, 안드로이드는 intent:// 로 앱이 열립니다.
+ */
+function oasisAppLinkUrl(webUrl, productNo) {
+  const path = oasisDetailPath(webUrl, productNo);
+  return path ? `https://m.oasis.co.kr/appLink?r=${encodeURIComponent(path)}` : null;
+}
+
 /** 컬리/오아시스 배지 — 목록·카드에서 어느 마켓 상품인지 바로 보이게 */
 function marketBadge(market, extraClass = '') {
   const m = market === 'oasis' ? 'oasis' : 'kurly';
@@ -1110,7 +1143,11 @@ function renderChecklist() {
           subBits.length ? el('p', { class: 'check-sub', text: subBits.join(' · ') }) : null,
           el('a', {
             class: `check-open${isOasis ? ' oasis' : ''}`,
-            href: item.url || productPageUrl(itemMarket, item.productNo),
+            // 오아시스는 휴대폰에서만 앱 딥링크로 보냅니다 (PC 에서는 상품 페이지 그대로).
+            href:
+              (isOasis && isMobileDevice() ? oasisAppLinkUrl(item.url, item.productNo) : null) ||
+              item.url ||
+              productPageUrl(itemMarket, item.productNo),
             target: '_blank',
             rel: 'noopener noreferrer',
             text: isOasis ? '오아시스에서 열기 ↗' : '컬리에서 열기 ↗',
