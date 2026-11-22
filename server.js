@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * 컬리 정기 장바구니 — 멀티유저 PWA 서버
+ * 정기 장바구니 — 멀티유저 PWA 서버
  *
  *   npm start  →  http://localhost:3000
  *
@@ -35,7 +35,7 @@ const checklist = require('./lib/checklist');
 const push = require('./lib/webpush');
 const store = require('./lib/store');
 
-const APP_NAME = '컬리 정기 장바구니';
+const APP_NAME = '정기 장바구니';
 const VERSION = require('./package.json').version;
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -912,7 +912,7 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
           const result = await push.sendToUser(
             user.userId,
             {
-              title: '🔔 컬리 정기 장바구니 테스트 알림',
+              title: '🔔 정기 장바구니 테스트 알림',
               body: '이 알림이 보이면 푸시가 제대로 연결된 거예요. 정기 실행이 끝나면 결과를 알려드릴게요.',
               url: '/#settings',
               tag: 'kurly-test',

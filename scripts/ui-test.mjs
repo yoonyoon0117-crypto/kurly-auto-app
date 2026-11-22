@@ -119,7 +119,7 @@ async function main() {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#authView:not([hidden])');
     check(await page.isVisible('#authNickname'), '로그인/회원가입 화면이 보인다');
-    check((await page.title()) === '컬리 정기 장바구니', '페이지 제목', await page.title());
+    check((await page.title()) === '정기 장바구니', '페이지 제목', await page.title());
     const manifestHref = await page.getAttribute('link[rel="manifest"]', 'href');
     check(manifestHref === '/manifest.json', 'PWA 매니페스트 연결', manifestHref || '');
     check(
@@ -142,6 +142,36 @@ async function main() {
     await page.waitForSelector('.plan-item');
     const itemsAfterRegister = await page.locator('.plan-item').count();
     check(itemsAfterRegister === 4, '가입 직후 기본 4개 상품', `${itemsAfterRegister}개`);
+
+    // 계획 탭 — [컬리 | 오아시스] 마켓 선택
+    check(
+      (await page.locator('#planMarketPills .market-pill').count()) === 2,
+      '계획 탭에 [컬리 | 오아시스] 전환 버튼'
+    );
+    check(await page.isVisible('#planFilterCard'), '계획 탭 정기 품목 카드');
+    const planCounts0 = await page.evaluate(() => ({
+      kurly: document.querySelector('#planKurlyCount').textContent.trim(),
+      oasis: document.querySelector('#planOasisCount').textContent.trim(),
+      kurlyActive: document.querySelector('#planMarketPills [data-market="kurly"]').classList.contains('active'),
+    }));
+    check(
+      planCounts0.kurly === '4' && planCounts0.oasis === '0' && planCounts0.kurlyActive,
+      '계획 pill 에 마켓별 개수 (컬리 4 · 오아시스 0)',
+      `컬리 ${planCounts0.kurly} · 오아시스 ${planCounts0.oasis}`
+    );
+    await page.click('#planMarketPills [data-market="oasis"]');
+    await page.waitForFunction(() => !document.querySelector('#planMarketEmpty').hidden, null, { timeout: 8000 });
+    check((await page.locator('.plan-item').count()) === 0, '오아시스를 고르면 계획 목록이 비워진다');
+    const planEmptyText = await page.innerText('#planMarketEmpty');
+    check(
+      /오아시스 정기 품목이 아직 없어요/.test(planEmptyText) && /상품 검색해서 담기/.test(planEmptyText),
+      '빈 마켓 안내 문구',
+      planEmptyText.split('\n')[0]
+    );
+    check((await page.innerText('#statItems')).includes('4'), '요약의 담을 상품은 두 마켓 전체 4개', await page.innerText('#statItems'));
+    await page.click('#planMarketPills [data-market="kurly"]');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-item').length === 4, null, { timeout: 8000 });
+    check(true, '컬리를 고르면 다시 컬리 품목 4개가 보인다');
 
     // 상품 이미지는 컬리 CDN 에서 옵니다. 화면 캡처 전에 로딩을 기다립니다.
     await page
@@ -422,17 +452,33 @@ async function main() {
     check((await page.locator('#checklistList .check-item.checked').count()) === 0, '체크 초기화 버튼');
 
     console.log('\n5-5) 오아시스마켓 — 검색 마켓 전환과 마켓별 장볼 목록');
-    // 검색 시트에서 [컬리 | 오아시스] 를 고를 수 있다
+    // 계획 탭에서 [오아시스]를 고른 뒤 [＋ 상품 검색해서 담기]를 누르면 검색도 오아시스로 열린다
     await page.click('.tabbar [data-tab="plan"]');
     await page.waitForSelector('#screen-plan:not([hidden])');
+    await page.click('#planMarketPills [data-market="oasis"]');
+    await page.waitForFunction(() => !document.querySelector('#planMarketEmpty').hidden, null, { timeout: 8000 });
     await page.click('#openSearchBtn');
     await page.waitForSelector('#searchSheet:not([hidden])');
     check((await page.locator('#searchMarketPills .market-pill').count()) === 2, '검색에 [컬리 | 오아시스] 전환 버튼');
+    const preselected = await page.evaluate(() => ({
+      oasisActive: document.querySelector('#searchMarketPills [data-market="oasis"]').classList.contains('active'),
+      placeholder: document.querySelector('#searchInput').placeholder,
+    }));
     check(
-      (await page.evaluate(() => document.querySelector('#searchMarketPills [data-market="kurly"]').classList.contains('active'))),
-      '검색은 기본값이 컬리'
+      preselected.oasisActive && /오아시스/.test(preselected.placeholder),
+      '계획에서 [오아시스]를 고르면 검색도 오아시스로 열린다',
+      preselected.placeholder
     );
-
+    await page.click('#searchMarketPills [data-market="kurly"]');
+    await page.waitForFunction(
+      () => document.querySelector('#searchMarketPills [data-market="kurly"]').classList.contains('active'),
+      null,
+      { timeout: 8000 }
+    );
+    check(
+      (await page.evaluate(() => document.querySelector('#searchInput').placeholder)).includes('컬리'),
+      '검색에서 [컬리]를 고르면 안내 문구도 컬리로 바뀐다'
+    );
     await page.click('#searchMarketPills [data-market="oasis"]');
     await page.waitForFunction(
       () => document.querySelector('#searchMarketPills [data-market="oasis"]').classList.contains('active'),
@@ -487,10 +533,20 @@ async function main() {
       (await oasisPlanItem.locator('.market-badge').innerText()).trim() === '오아시스',
       '계획 상품에도 오아시스 배지'
     );
-    const planItemCount = await page.locator('.plan-item').count();
-    check(planItemCount === 6, '오아시스 상품 1개가 더해져 6개', `${planItemCount}개`);
+    check(
+      (await page.locator('.plan-item').count()) === 1,
+      '계획 탭은 고른 마켓(오아시스) 품목만 보여 준다',
+      `${await page.locator('.plan-item').count()}개`
+    );
+    check((await page.innerText('#statItems')).includes('6'), '요약의 담을 상품은 두 마켓 전체 6개', await page.innerText('#statItems'));
+    check((await page.innerText('#planMarketMeta')).includes('오아시스 1개'), '고른 마켓의 개수·금액 표시', await page.innerText('#planMarketMeta'));
     await page.click('#saveBtn');
     await page.waitForFunction(() => document.querySelector('#saveBar').hidden, null, { timeout: 15000 });
+    await waitToastGone();
+    await shot('20-1-plan-market-oasis-390x844.png');
+    await page.click('#planMarketPills [data-market="kurly"]');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-item').length === 5, null, { timeout: 8000 });
+    check((await page.locator('.plan-item').count()) === 5, '컬리를 고르면 컬리 품목 5개', `${await page.locator('.plan-item').count()}개`);
 
     // 실행 탭 장볼 목록 — 마켓 pill 로 목록이 바뀐다
     await page.click('.tabbar [data-tab="run"]');
@@ -560,9 +616,14 @@ async function main() {
     );
     await page.click('.tabbar [data-tab="plan"]');
     await page.waitForSelector('#screen-plan:not([hidden])');
+    await page.click('#planMarketPills [data-market="oasis"]');
+    await page.waitForSelector('.plan-item:has(a[href^="https://m.oasis.co.kr"])');
     await page.locator('.plan-item:has(a[href^="https://m.oasis.co.kr"]) .btn-danger-ghost').click();
     await page.click('#saveBtn');
     await page.waitForFunction(() => document.querySelector('#saveBar').hidden, null, { timeout: 15000 });
+    check(await page.isVisible('#planMarketEmpty'), '오아시스 품목을 비우면 안내 문구가 보인다');
+    await page.click('#planMarketPills [data-market="kurly"]');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-item').length === 5, null, { timeout: 8000 });
     check((await page.locator('.plan-item').count()) === 5, '오아시스 상품 정리 후 계획 5개');
 
     // 설정 — 목록 알림만 받기

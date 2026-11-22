@@ -1,8 +1,8 @@
 {
   "name": "kurly-auto-app",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
-  "description": "컬리 정기 장바구니 — 멀티유저 PWA (아이폰 홈 화면 추가) + Docker 배포",
+  "description": "정기 장바구니 — 멀티유저 PWA (아이폰 홈 화면 추가) + Docker 배포",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

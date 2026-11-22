@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 컬리 정기 장바구니 — 화면 로직
+ * 정기 장바구니 — 화면 로직
  *  · 로그인/회원가입(초대 코드) → 계획 · 실행 · 설정 3개 탭
  *  · 계획은 "1주 소비량 → 담을 수량" 자동 계산, 저장 버튼으로 서버에 반영
  *  · 실행 화면은 지금 담기 / 미리보기 / 실행 기록, 진행 상황은 /api/status 폴링
@@ -35,6 +35,10 @@ const state = {
   checklistSaving: false,
   // 장볼 목록에서 지금 보고 있는 마켓 (컬리 | 오아시스)
   checklistMarket: 'kurly',
+  // 계획 탭에서 지금 보고 있는 마켓 (컬리 | 오아시스)
+  planMarket: 'kurly',
+  // 사용자가 계획 탭에서 마켓 pill 을 직접 눌렀는지 — 그 전에는 빈 마켓을 건너뜁니다.
+  planMarketTouched: false,
 };
 
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
@@ -307,9 +311,54 @@ function renderPlan() {
   const list = $('#planList');
   list.textContent = '';
   const items = state.plan?.items || [];
+  const counts = { kurly: 0, oasis: 0 };
+  items.forEach((item) => {
+    counts[marketOf(item)] += 1;
+  });
+
+  // 처음 불러왔을 때 고른 마켓이 비어 있고 다른 마켓에 상품이 있으면 그쪽을 보여 줍니다.
+  // (pill 을 직접 누른 뒤에는 고른 마켓을 그대로 두고 안내 문구를 보여 줍니다.)
+  if (!state.planMarketTouched && counts[state.planMarket] === 0) {
+    const other = state.planMarket === 'oasis' ? 'kurly' : 'oasis';
+    if (counts[other] > 0) state.planMarket = other;
+  }
+  const market = state.planMarket === 'oasis' ? 'oasis' : 'kurly';
+
+  const filterCard = $('#planFilterCard');
+  if (filterCard) filterCard.hidden = items.length === 0;
   $('#planEmpty').hidden = items.length > 0;
 
-  items.forEach((item) => {
+  const kCount = $('#planKurlyCount');
+  const oCount = $('#planOasisCount');
+  if (kCount) kCount.textContent = String(counts.kurly);
+  if (oCount) oCount.textContent = String(counts.oasis);
+  $$('#planMarketPills .market-pill').forEach((btn) => {
+    const active = btn.dataset.market === market;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  // 고른 마켓의 품목만 보여 줍니다. (요약 카드의 합계는 두 마켓 전체)
+  const visible = items.filter((item) => marketOf(item) === market);
+  const subtotal = visible
+    .filter((item) => item.active !== false)
+    .reduce((sum, item) => sum + (Number(item.price) || 0) * computeQuantity(item), 0);
+  const meta = $('#planMarketMeta');
+  if (meta) {
+    meta.textContent = visible.length
+      ? `${MARKET_LABEL[market]} ${visible.length}개 · ${won(subtotal)}`
+      : `${MARKET_LABEL[market]} 0개`;
+  }
+
+  const marketEmpty = $('#planMarketEmpty');
+  if (marketEmpty) {
+    marketEmpty.hidden = items.length === 0 || visible.length > 0;
+    if (!marketEmpty.hidden) {
+      $('#planMarketEmptyText').textContent = `${MARKET_LABEL[market]} 정기 품목이 아직 없어요.`;
+    }
+  }
+
+  visible.forEach((item) => {
     const qty = computeQuantity(item);
     const price = (Number(item.price) || 0) * qty;
     const thumb = item.imageUrl
@@ -1531,7 +1580,20 @@ function stopPolling() {
 
 /* ─────────────── 검색 ─────────────── */
 
-function openSearch() {
+function openSearch(preferredMarket = null) {
+  // 계획 탭에서 열면 지금 보고 있는 마켓으로 미리 골라 둡니다.
+  if (preferredMarket) {
+    const next = preferredMarket === 'oasis' ? 'oasis' : 'kurly';
+    if (state.search.market !== next) {
+      state.search.market = next;
+      state.search.results = [];
+      state.search.shown = 8;
+      state.search.q = '';
+      $('#searchResults').textContent = '';
+      $('#searchInput').value = '';
+      $('#searchStatus').hidden = true;
+    }
+  }
   $('#searchSheet').hidden = false;
   $('#searchStatus').hidden = true;
   applyMarketUI();
@@ -2205,7 +2267,7 @@ function pushSupport() {
     return {
       ok: false,
       reason: isIOSDevice()
-        ? '알림이 차단되어 있어요. 아이폰 설정 > 알림 > 컬리 장바구니에서 허용으로 바꿔 주세요.'
+        ? '알림이 차단되어 있어요. 아이폰 설정 > 알림 > 정기 장바구니에서 허용으로 바꿔 주세요.'
         : '브라우저 설정에서 이 사이트의 알림을 허용해 주세요.',
     };
   }
@@ -2549,8 +2611,17 @@ function bindEvents() {
   window.addEventListener('hashchange', () => setTab(location.hash.replace('#', ''), { push: false }));
 
   // 계획
-  $('#openSearchBtn').addEventListener('click', openSearch);
+  $('#openSearchBtn').addEventListener('click', () => openSearch(state.planMarket));
   $('#loadStarterBtn').addEventListener('click', loadStarter);
+  $('#planMarketPills').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-market]');
+    if (!btn) return;
+    const next = btn.dataset.market === 'oasis' ? 'oasis' : 'kurly';
+    state.planMarketTouched = true;
+    if (state.planMarket === next) return;
+    state.planMarket = next;
+    renderPlan();
+  });
   $('#saveBtn').addEventListener('click', savePlan);
   $('#refreshBtn').addEventListener('click', async () => {
     try {

@@ -47,7 +47,7 @@ test('PWA 매니페스트 — 설치 조건(이름·standalone·192/512 아이�
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /application\/json/);
   const manifest = JSON.parse(res.text);
-  assert.equal(manifest.name, '컬리 정기 장바구니');
+  assert.equal(manifest.name, '정기 장바구니');
   assert.equal(manifest.lang, 'ko');
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/');
@@ -105,5 +105,5 @@ test('경로 탈출·없는 파일 처리', async () => {
 
   const spa = await request(server.baseUrl, '/some/deep/link');
   assert.equal(spa.status, 200);
-  assert.match(spa.text, /컬리 정기 장바구니/);
+  assert.match(spa.text, /정기 장바구니/);
 });

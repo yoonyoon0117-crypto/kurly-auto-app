@@ -8,7 +8,7 @@
  *  · push: 서버가 보낸 웹 푸시를 알림으로 표시 (iOS 16.4+ 홈 화면 앱)
  *  · notificationclick: 앱을 열거나 이미 열린 창을 앞으로 가져옵니다.
  */
-const VERSION = 'kurly-v2.3.0';
+const VERSION = 'kurly-v2.3.1';
 const SHELL = [
   '/',
   '/index.html',
@@ -53,7 +53,7 @@ self.addEventListener('push', (event) => {
     payload = { body: event.data ? event.data.text() : '' };
   }
 
-  const title = payload.title || '컬리 정기 장바구니';
+  const title = payload.title || '정기 장바구니';
   const options = {
     body: payload.body || '장바구니 담기 결과가 도착했어요.',
     icon: '/icons/icon-192.png',

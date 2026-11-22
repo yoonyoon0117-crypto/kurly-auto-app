@@ -46,7 +46,7 @@ test('알림 문구: 상품·수량·실패 이유·합계가 들어간다', () 
   assert.match(text, /⏭ 닭 다리살 ×2/);
   assert.match(text, /장바구니 총 6건/);
   assert.match(text, /예상 금액 75,152원/);
-  assert.match(text, /앰버님의 컬리 정기 장바구니/);
+  assert.match(text, /앰버님의 정기 장바구니/);
 
   const ok = formatSummary({ ...SUMMARY, failed: 0, items: SUMMARY.items.slice(0, 2) });
   assert.match(ok, /담았어요/);

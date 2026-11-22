@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────
-   컬리 정기 장바구니 — 모바일 우선 PWA 스타일
+   정기 장바구니 — 모바일 우선 PWA 스타일
    iPhone Safari(390×844) 기준으로 설계, 데스크톱에서는 가운데 정렬
    ───────────────────────────────────────────── */
 
@@ -256,6 +256,12 @@ b { font-weight: 700; }
 .stat b { font-size: 14.5px; letter-spacing: -0.01em; }
 
 .plan-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* 계획 탭 — [컬리 | 오아시스] 마켓 선택 */
+.plan-filter { padding: 14px 14px 12px; margin-bottom: 10px; }
+.plan-filter .market-pills { margin: 10px 0 0; }
+.plan-filter .card-title { font-size: 15px; }
+.plan-filter .muted.small { font-weight: 700; color: var(--ink-2); }
 
 .plan-item {
   background: #fff; border-radius: 16px; padding: 12px; box-shadow: var(--shadow);
