@@ -575,16 +575,76 @@ async function main() {
     const oasisOpen = page.locator('#checklistList .check-open').first();
     check((await oasisOpen.innerText()).includes('오아시스에서 열기'), '오아시스 상품은 [오아시스에서 열기]');
     const oasisHref = await oasisOpen.getAttribute('href');
+    // 아이폰: /appLink 화면(5초 뒤 App Store 로 넘어감)을 거치지 않고 oasiskr:// 로 바로
     check(
-      /^https:\/\/m\.oasis\.co\.kr\/appLink\?r=%2Fproduct%2Fdetail%2F\d+$/.test(oasisHref || ''),
-      '오아시스 상품은 앱 딥링크(appLink)로 연결',
+      /^oasiskr:\/\/deeplink\?menu=page&nextUrl=%252Fproduct%252Fdetail%252F\d+&loginyn=N&data=$/.test(
+        oasisHref || ''
+      ),
+      '아이폰 오아시스 상품은 oasiskr:// 딥링크로 연결',
       oasisHref || ''
     );
-    const appLinkPath = decodeURIComponent((oasisHref || '').split('r=')[1] || '');
+    const appLinkPath = decodeURIComponent(decodeURIComponent((oasisHref || '').split('nextUrl=')[1]?.split('&')[0] || ''));
     check(
       /^\/product\/detail\/\d+$/.test(appLinkPath) && (oasisPlanWebHref || '').endsWith(appLinkPath),
-      'appLink 경로가 계획에 담긴 그 상품의 웹 주소와 같다',
+      '딥링크 경로가 계획에 담긴 그 상품의 웹 주소와 같다',
       `${appLinkPath} / ${oasisPlanWebHref}`
+    );
+    check(
+      (await oasisOpen.getAttribute('target')) === null && (await oasisOpen.getAttribute('rel')) === null,
+      '아이폰 앱 스킴 링크에는 target·rel 을 붙이지 않는다 (빈 탭 방지)'
+    );
+
+    // 다른 기기: 안드로이드는 /appLink, PC 는 상품 웹 페이지 — 렌더 결과까지 확인
+    async function openHrefWithUserAgent(ua) {
+      return page.evaluate(async (agent) => {
+        Object.defineProperty(navigator, 'userAgent', { value: agent, configurable: true });
+        try {
+          renderChecklist();
+          const a = document.querySelector('#checklistList .check-open');
+          return {
+            isIOS: isIOSDevice(),
+            isMobile: isMobileDevice(),
+            href: a?.getAttribute('href') || '',
+            target: a?.getAttribute('target'),
+          };
+        } finally {
+          delete navigator.userAgent;
+        }
+      }, ua);
+    }
+
+    const androidUA =
+      'Mozilla/5.0 (Linux; Android 14; SM-S911N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
+    const androidOpen = await openHrefWithUserAgent(androidUA);
+    check(
+      androidOpen.isIOS === false && androidOpen.isMobile === true,
+      '안드로이드는 iOS 로 보지 않는다',
+      `iOS ${androidOpen.isIOS} · mobile ${androidOpen.isMobile}`
+    );
+    check(
+      /^https:\/\/m\.oasis\.co\.kr\/appLink\?r=%2Fproduct%2Fdetail%2F\d+$/.test(androidOpen.href),
+      '안드로이드는 appLink 로 연결',
+      androidOpen.href
+    );
+    check(androidOpen.target === '_blank', '안드로이드·웹 링크는 새 탭으로 연다');
+
+    const desktopUA =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+    const desktopOpen = await openHrefWithUserAgent(desktopUA);
+    check(
+      desktopOpen.isIOS === false && desktopOpen.isMobile === false,
+      'PC 는 iOS·휴대폰 모두 아니다',
+      `iOS ${desktopOpen.isIOS} · mobile ${desktopOpen.isMobile}`
+    );
+    check(
+      /^https:\/\/m\.oasis\.co\.kr\/product\/detail\/\d+$/.test(desktopOpen.href),
+      'PC 에서는 상품 웹 페이지로 연결',
+      desktopOpen.href
+    );
+    await page.evaluate(() => renderChecklist()); // 아이폰 화면으로 되돌린다
+    check(
+      /^oasiskr:\/\//.test((await page.locator('#checklistList .check-open').first().getAttribute('href')) || ''),
+      '아이폰 화면으로 돌아오면 다시 oasiskr:// 링크'
     );
     check(
       /^https:\/\/m\.oasis\.co\.kr\/product\/detail\/\d+$/.test(oasisPlanWebHref || ''),

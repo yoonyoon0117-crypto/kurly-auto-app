@@ -94,6 +94,15 @@ function isMobileDevice() {
   return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
 }
 
+/** 아이폰·아이패드인지 — iOS 는 /appLink 화면을 거치지 않고 oasiskr:// 로 바로 보냅니다 */
+function isIOSDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  // 아이패드OS 는 사파리에서 Macintosh 로 보이므로 터치 여부로 함께 판단합니다.
+  return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+}
+
 /** 오아시스 상품 페이지 주소에서 '/product/detail/{번호}' 경로만 뽑습니다 */
 function oasisDetailPath(webUrl, productNo) {
   try {
@@ -109,13 +118,40 @@ function oasisDetailPath(webUrl, productNo) {
 }
 
 /**
- * 오아시스 앱으로 열기 — 오아시스는 유니버설 링크(apple-app-site-association)가 없어
- * 상품 주소를 직접 열면 사파리에 머뭅니다. 오아시스가 자기 앱 딥링크에 쓰는
- * /appLink?r=... 를 거치면 iOS 는 oasiskr://, 안드로이드는 intent:// 로 앱이 열립니다.
+ * 오아시스 앱 딥링크(oasiskr://) — m.oasis.co.kr/appLink 화면이 앱에 넘기는 주소 그대로입니다.
+ *   oasiskr://deeplink?menu=page&nextUrl={경로를 두 번 인코딩}&loginyn=N&data=
+ */
+function oasisIOSAppUrl(webUrl, productNo) {
+  const path = oasisDetailPath(webUrl, productNo);
+  if (!path) return null;
+  return `oasiskr://deeplink?menu=page&nextUrl=${encodeURIComponent(encodeURIComponent(path))}&loginyn=N&data=`;
+}
+
+/**
+ * 오아시스 앱 링크(/appLink) — 앱이 없는 안드로이드에서 안내 화면을 거쳐 intent:// 로 넘어갑니다.
  */
 function oasisAppLinkUrl(webUrl, productNo) {
   const path = oasisDetailPath(webUrl, productNo);
   return path ? `https://m.oasis.co.kr/appLink?r=${encodeURIComponent(path)}` : null;
+}
+
+/**
+ * 오아시스 앱으로 열기 — 오아시스는 유니버설 링크(apple-app-site-association)가 없어
+ * 상품 주소를 직접 열면 사파리에 머뭅니다.
+ *  · 아이폰: /appLink 화면은 5초 뒤 무조건 App Store 로 넘어가 앱과 함께 App Store 가
+ *    중복으로 열리므로, 그 화면이 앱에 넘기는 oasiskr:// 딥링크를 바로 씁니다.
+ *  · 안드로이드: /appLink?r=... 를 거쳐 intent:// 로 앱을 엽니다.
+ *  · PC: 앱 링크가 의미 없으므로 null (상품 웹 페이지 그대로).
+ */
+function oasisAppOpenUrl(webUrl, productNo) {
+  if (isIOSDevice()) return oasisIOSAppUrl(webUrl, productNo);
+  if (isMobileDevice()) return oasisAppLinkUrl(webUrl, productNo);
+  return null;
+}
+
+/** oasiskr:// 같은 앱 전용 스킴인지 (새 탭을 열면 빈 탭만 남습니다) */
+function isAppSchemeUrl(href) {
+  return /^oasiskr:\/\//i.test(String(href || ''));
 }
 
 /** 컬리/오아시스 배지 — 목록·카드에서 어느 마켓 상품인지 바로 보이게 */
@@ -1135,6 +1171,12 @@ function renderChecklist() {
     if (item.recipeNames?.length) subBits.push(item.recipeNames.join(', '));
     if (item.volume) subBits.push(item.volume);
 
+    const openHref =
+      (isOasis ? oasisAppOpenUrl(item.url, item.productNo) : null) ||
+      item.url ||
+      productPageUrl(itemMarket, item.productNo);
+    const appScheme = isOasis && isAppSchemeUrl(openHref);
+
     box.appendChild(
       el('li', { class: `check-item${item.checked ? ' checked' : ''}${isOasis ? ' oasis' : ''}` }, [
         el('label', { class: 'check-box', title: '담음' }, [checkbox, el('i')]),
@@ -1143,13 +1185,11 @@ function renderChecklist() {
           subBits.length ? el('p', { class: 'check-sub', text: subBits.join(' · ') }) : null,
           el('a', {
             class: `check-open${isOasis ? ' oasis' : ''}`,
-            // 오아시스는 휴대폰에서만 앱 딥링크로 보냅니다 (PC 에서는 상품 페이지 그대로).
-            href:
-              (isOasis && isMobileDevice() ? oasisAppLinkUrl(item.url, item.productNo) : null) ||
-              item.url ||
-              productPageUrl(itemMarket, item.productNo),
-            target: '_blank',
-            rel: 'noopener noreferrer',
+            // 오아시스는 휴대폰에서만 앱으로 보냅니다 (PC 에서는 상품 페이지 그대로).
+            // 아이폰 oasiskr:// 링크에는 target 을 붙이지 않습니다 — 빈 탭이 함께 열립니다.
+            href: openHref,
+            target: appScheme ? null : '_blank',
+            rel: appScheme ? null : 'noopener noreferrer',
             text: isOasis ? '오아시스에서 열기 ↗' : '컬리에서 열기 ↗',
           }),
         ]),
