@@ -21,8 +21,9 @@ const { HttpError, applySecurityHeaders, sendJson, sendText, readJson, parseCook
 const sessions = require('./lib/sessions');
 const { hashPassword, verifyPassword } = require('./lib/passwords');
 const { sealJson, openJson } = require('./lib/crypto-box');
-const { normalizePlanInput, summarizePlan, computeQuantity } = require('./lib/plan');
+const { normalizePlanInput, summarizePlan, computeQuantity, MARKETS, normalizeMarket } = require('./lib/plan');
 const { searchProducts, getProductDetail, KurlyApiError } = require('./lib/kurly-api');
+const { searchOasisProducts, getOasisProductDetail, OasisApiError } = require('./lib/oasis-api');
 const { parseSessionInput } = require('./lib/session-import');
 const { starterItems } = require('./lib/seeds');
 const { createLogger } = require('./lib/logger');
@@ -668,7 +669,11 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         if (pathname === '/api/checklist/check' && method === 'POST') {
           let checked;
           try {
-            checked = checklist.toggleChecked(user.checklist?.checked, body?.productNo, body?.checked);
+            checked = checklist.toggleChecked(
+              user.checklist?.checked,
+              { market: body?.market, productNo: body?.productNo },
+              body?.checked
+            );
           } catch (err) {
             throw new HttpError(err.status || 400, err.message);
           }
@@ -761,19 +766,33 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         if (pathname === '/api/search' && method === 'GET') {
           const q = String(url.searchParams.get('q') ?? '').trim();
           const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+          const marketRaw = String(url.searchParams.get('market') ?? '').trim();
+          if (marketRaw && !MARKETS.includes(marketRaw)) {
+            throw new HttpError(400, '마켓은 kurly 또는 oasis 여야 합니다.');
+          }
+          const market = normalizeMarket(marketRaw);
           if (!q) throw new HttpError(400, '검색어를 입력해 주세요.');
           if (q.length > 60) throw new HttpError(400, '검색어가 너무 깁니다.');
-          const result = await cached(`search:${q}:${page}`, 5 * 60 * 1000, () =>
-            searchProducts(q, { page, limit: 24 })
+          const result = await cached(`search:${market}:${q}:${page}`, 5 * 60 * 1000, () =>
+            market === 'oasis'
+              ? searchOasisProducts(q, { page, limit: 24 })
+              : searchProducts(q, { page, limit: 24 })
           );
-          return sendJson(res, 200, { ok: true, ...result });
+          return sendJson(res, 200, { ok: true, market, ...result });
         }
 
         if (pathname === '/api/product' && method === 'GET') {
           const no = Number(url.searchParams.get('no'));
+          const marketRaw = String(url.searchParams.get('market') ?? '').trim();
+          if (marketRaw && !MARKETS.includes(marketRaw)) {
+            throw new HttpError(400, '마켓은 kurly 또는 oasis 여야 합니다.');
+          }
+          const market = normalizeMarket(marketRaw);
           if (!Number.isInteger(no) || no <= 0) throw new HttpError(400, '상품번호가 올바르지 않습니다.');
-          const detail = await cached(`product:${no}`, 10 * 60 * 1000, () => getProductDetail(no));
-          return sendJson(res, 200, { ok: true, product: detail });
+          const detail = await cached(`product:${market}:${no}`, 10 * 60 * 1000, () =>
+            market === 'oasis' ? getOasisProductDetail(no) : getProductDetail(no)
+          );
+          return sendJson(res, 200, { ok: true, market, product: detail });
         }
 
         if (pathname === '/api/kurly/status' && method === 'GET') {
@@ -1005,7 +1024,7 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
       const status =
         err instanceof HttpError
           ? err.status
-          : err instanceof KurlyApiError
+          : err instanceof KurlyApiError || err instanceof OasisApiError
             ? 502
             : typeof err.status === 'number' && err.status >= 400 && err.status < 500
               ? err.status
@@ -1013,7 +1032,7 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
       const message =
         status < 500
           ? err.message
-          : err instanceof KurlyApiError
+          : err instanceof KurlyApiError || err instanceof OasisApiError
             ? err.message
             : '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
       if (status >= 500) logger.error(`${req.method} ${pathname} → ${status}: ${err.message}`);

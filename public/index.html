@@ -158,9 +158,13 @@
         <h2 class="card-title flush">이번 주 장볼 목록</h2>
         <span class="muted small" id="checklistMeta">0개</span>
       </div>
-      <p class="muted small checklist-hint" id="checklistHint">컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]로 상품을 열고, 담은 것은 체크해 두세요.</p>
+      <p class="muted small checklist-hint" id="checklistHint">컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]·[오아시스에서 열기]로 상품을 열고, 담은 것은 체크해 두세요.</p>
+      <div class="market-pills" id="checklistMarketPills" role="tablist" aria-label="마켓별 장볼 목록">
+        <button type="button" class="market-pill active" data-market="kurly" role="tab" aria-selected="true">컬리 <span class="cnt" id="checklistKurlyCount">0</span></button>
+        <button type="button" class="market-pill" data-market="oasis" role="tab" aria-selected="false">오아시스 <span class="cnt" id="checklistOasisCount">0</span></button>
+      </div>
       <ul class="checklist" id="checklistList"></ul>
-      <p class="empty-line" id="checklistEmpty">목록이 비어 있어요. 계획에 상품을 담거나 요리를 선택해 주세요.</p>
+      <p class="empty-line" id="checklistEmpty">컬리 상품이 아직 없어요. 계획에 상품을 담거나 요리를 선택해 주세요.</p>
       <div class="checklist-actions">
         <button class="btn btn-ghost" id="checklistResetBtn" type="button">체크 초기화</button>
         <button class="btn btn-primary" id="checklistDoneBtn" type="button">이번 주 장보기 완료</button>
@@ -376,6 +380,10 @@
     </form>
   </header>
   <div class="sheet-body">
+    <div class="market-pills" id="searchMarketPills" role="tablist" aria-label="검색할 마켓">
+      <button type="button" class="market-pill active" data-market="kurly" role="tab" aria-selected="true">컬리</button>
+      <button type="button" class="market-pill" data-market="oasis" role="tab" aria-selected="false">오아시스</button>
+    </div>
     <div class="quick-keywords" id="quickKeywords">
       <button type="button" class="chip" data-q="유정란 15구">유정란 15구</button>
       <button type="button" class="chip" data-q="사과">사과</button>
@@ -447,6 +455,10 @@
 
     <section class="card">
       <h3 class="card-title">재료 검색</h3>
+      <div class="market-pills" id="recipeMarketPills" role="tablist" aria-label="재료를 찾을 마켓">
+        <button type="button" class="market-pill active" data-market="kurly" role="tab" aria-selected="true">컬리</button>
+        <button type="button" class="market-pill" data-market="oasis" role="tab" aria-selected="false">오아시스</button>
+      </div>
       <form class="search-form recipe-search-form" id="recipeSearchForm" autocomplete="off">
         <input type="search" id="recipeSearchInput" placeholder="예) 두부, 애호박" aria-label="재료 검색어" enterkeyhint="search" />
         <button class="btn btn-primary" type="submit" id="recipeSearchBtn">검색</button>

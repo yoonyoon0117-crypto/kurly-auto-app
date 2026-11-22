@@ -304,7 +304,8 @@ test('POST /api/push/unsubscribe — 그 endpoint 만 지운다', async () => {
 test('PWA 껍데기 — 서비스 워커가 push·notificationclick 을 처리하고 설정에 푸시 UI 가 있다', async () => {
   const sw = await request(server.baseUrl, '/sw.js');
   assert.equal(sw.status, 200);
-  assert.match(sw.text, /kurly-v2\.2\.3/);
+  // 캐시 이름은 버전마다 올립니다 (kurly-v2.3.0 …) — 형식만 확인해 버전이 올라도 깨지지 않게 합니다.
+  assert.match(sw.text, /const VERSION = 'kurly-v2\.\d+\.\d+';/);
   // 새로 배포한 HTML/JS/CSS 가 홈 화면 앱을 다시 열 때 바로 반영되도록 네트워크 우선이어야 합니다.
   assert.match(sw.text, /request\.destination === 'script'/);
   assert.match(sw.text, /cache: 'no-store'/);

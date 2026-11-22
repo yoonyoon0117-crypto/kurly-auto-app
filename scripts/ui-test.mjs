@@ -421,6 +421,150 @@ async function main() {
     );
     check((await page.locator('#checklistList .check-item.checked').count()) === 0, '체크 초기화 버튼');
 
+    console.log('\n5-5) 오아시스마켓 — 검색 마켓 전환과 마켓별 장볼 목록');
+    // 검색 시트에서 [컬리 | 오아시스] 를 고를 수 있다
+    await page.click('.tabbar [data-tab="plan"]');
+    await page.waitForSelector('#screen-plan:not([hidden])');
+    await page.click('#openSearchBtn');
+    await page.waitForSelector('#searchSheet:not([hidden])');
+    check((await page.locator('#searchMarketPills .market-pill').count()) === 2, '검색에 [컬리 | 오아시스] 전환 버튼');
+    check(
+      (await page.evaluate(() => document.querySelector('#searchMarketPills [data-market="kurly"]').classList.contains('active'))),
+      '검색은 기본값이 컬리'
+    );
+
+    await page.click('#searchMarketPills [data-market="oasis"]');
+    await page.waitForFunction(
+      () => document.querySelector('#searchMarketPills [data-market="oasis"]').classList.contains('active'),
+      null,
+      { timeout: 8000 }
+    );
+    const oasisUi = await page.evaluate(() => {
+      const btn = document.querySelector('#searchBtn');
+      const style = getComputedStyle(btn);
+      return {
+        placeholder: document.querySelector('#searchInput').placeholder,
+        green: `${style.backgroundImage} ${style.backgroundColor}`.includes('45, 106, 79'),
+        cls: btn.className,
+      };
+    });
+    check(/오아시스/.test(oasisUi.placeholder), '오아시스에서는 검색창 안내 문구가 바뀐다', oasisUi.placeholder);
+    check(oasisUi.green, '오아시스 검색 버튼은 초록(#2D6A4F)', oasisUi.cls);
+
+    await page.fill('#searchInput', '유정란');
+    await page.click('#searchBtn');
+    await page.waitForFunction(
+      () => (document.querySelector('#searchStatus')?.textContent || '').includes('오아시스'),
+      null,
+      { timeout: 30000 }
+    );
+    await page.waitForSelector('#searchResults .product-card');
+    const oasisResults = await page.locator('#searchResults .product-card').count();
+    check(oasisResults > 0, '오아시스 실시간 검색 결과', `${oasisResults}개 표시`);
+    const firstBadge = (await page.locator('#searchResults .product-card .market-badge').first().innerText()).trim();
+    check(firstBadge === '오아시스', '검색 결과 카드에 오아시스 배지', firstBadge);
+    check(
+      (await page.locator('#searchResults .product-card .btn-primary').first().innerText()).includes('+ 추가'),
+      '검색 결과 카드의 [+ 추가] 버튼'
+    );
+    await waitToastGone();
+    await shot('20-oasis-search-390x844.png');
+
+    // 오아시스 상품을 계획에 추가
+    await page.locator('#searchResults .product-card button.btn-primary:not([disabled])').first().click();
+    await page.waitForSelector('#addModal:not([hidden])');
+    await page.waitForSelector('#addModalBody .calc-box', { timeout: 20000 });
+    const oasisModal = await page.innerText('#addModalBody');
+    check(/담을 수량/.test(oasisModal), '오아시스 상품도 담을 수량을 계산한다', oasisModal.split('\n')[0].slice(0, 40));
+    await page.waitForTimeout(300);
+    await page.click('#addModalConfirm');
+    await page.waitForFunction(() => document.querySelector('#addModal').hidden);
+    await page.waitForSelector('#screen-plan:not([hidden])');
+
+    const oasisPlanItem = page.locator('.plan-item:has(a[href^="https://m.oasis.co.kr"])');
+    check((await oasisPlanItem.count()) === 1, '오아시스 상품이 계획에 담긴다');
+    check(
+      (await oasisPlanItem.locator('.market-badge').innerText()).trim() === '오아시스',
+      '계획 상품에도 오아시스 배지'
+    );
+    const planItemCount = await page.locator('.plan-item').count();
+    check(planItemCount === 6, '오아시스 상품 1개가 더해져 6개', `${planItemCount}개`);
+    await page.click('#saveBtn');
+    await page.waitForFunction(() => document.querySelector('#saveBar').hidden, null, { timeout: 15000 });
+
+    // 실행 탭 장볼 목록 — 마켓 pill 로 목록이 바뀐다
+    await page.click('.tabbar [data-tab="run"]');
+    await page.waitForSelector('#screen-run:not([hidden])');
+    await page.waitForSelector('#checklistList .check-item');
+    const counts = await page.evaluate(() => ({
+      kurly: document.querySelector('#checklistKurlyCount').textContent.trim(),
+      oasis: document.querySelector('#checklistOasisCount').textContent.trim(),
+      kurlyItems: document.querySelectorAll('#checklistList .check-item').length,
+    }));
+    check(counts.kurly === '7' && counts.oasis === '1', '마켓 pill 에 상품 개수 표시 (컬리 7 · 오아시스 1)', `컬리 ${counts.kurly} · 오아시스 ${counts.oasis}`);
+    check(counts.kurlyItems === 7, '처음에는 컬리 상품만 보인다', `${counts.kurlyItems}개`);
+    check(
+      (await page.locator('#checklistList .check-open').first().innerText()).includes('컬리에서 열기'),
+      '컬리 상품은 [컬리에서 열기]'
+    );
+
+    await page.click('#checklistMarketPills [data-market="oasis"]');
+    await page.waitForFunction(
+      () => document.querySelectorAll('#checklistList .check-item').length === 1,
+      null,
+      { timeout: 8000 }
+    );
+    check(true, '오아시스를 고르면 오아시스 상품만 보인다');
+    const oasisOpen = page.locator('#checklistList .check-open').first();
+    check((await oasisOpen.innerText()).includes('오아시스에서 열기'), '오아시스 상품은 [오아시스에서 열기]');
+    const oasisHref = await oasisOpen.getAttribute('href');
+    check(/^https:\/\/m\.oasis\.co\.kr\/product\/detail\/\d+$/.test(oasisHref || ''), '오아시스 상품 페이지로 연결', oasisHref || '');
+    check(
+      await page.evaluate(() =>
+        document.querySelector('#checklistList .check-item')?.classList.contains('oasis')
+      ),
+      '오아시스 항목은 초록 스타일'
+    );
+
+    await page.locator('#checklistList .check-box i').first().click();
+    await page.waitForFunction(
+      () => (document.querySelector('#checklistMeta')?.textContent || '').includes('담음 1'),
+      null,
+      { timeout: 8000 }
+    );
+    check(true, '오아시스 상품도 [담음] 체크된다');
+    await waitToastGone();
+    await page.locator('#checklistCard').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await shot('15-oasis-checklist-390x844.png');
+
+    // 컬리 목록은 그대로 (마켓별 체크 분리)
+    await page.click('#checklistMarketPills [data-market="kurly"]');
+    await page.waitForFunction(
+      () => document.querySelectorAll('#checklistList .check-item').length === 7,
+      null,
+      { timeout: 8000 }
+    );
+    check(
+      (await page.locator('#checklistList .check-item.checked').count()) === 0,
+      '오아시스 체크는 컬리 목록에 섞이지 않는다'
+    );
+
+    // 뒷 단계(목록 알림 모드)를 위해 오아시스 상품은 계획에서 뺀다
+    await page.click('#checklistMarketPills [data-market="oasis"]');
+    await page.locator('#checklistList .check-box i').first().click();
+    await page.waitForFunction(
+      () => !(document.querySelector('#checklistMeta')?.textContent || '').includes('담음'),
+      null,
+      { timeout: 8000 }
+    );
+    await page.click('.tabbar [data-tab="plan"]');
+    await page.waitForSelector('#screen-plan:not([hidden])');
+    await page.locator('.plan-item:has(a[href^="https://m.oasis.co.kr"]) .btn-danger-ghost').click();
+    await page.click('#saveBtn');
+    await page.waitForFunction(() => document.querySelector('#saveBar').hidden, null, { timeout: 15000 });
+    check((await page.locator('.plan-item').count()) === 5, '오아시스 상품 정리 후 계획 5개');
+
     // 설정 — 목록 알림만 받기
     await page.click('.tabbar [data-tab="settings"]');
     await page.waitForSelector('#screen-settings:not([hidden])');

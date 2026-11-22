@@ -23,19 +23,26 @@ const state = {
   wasActive: false,
   pollTimer: null,
   pollUntil: 0,
-  search: { results: [], shown: 8, q: '' },
+  search: { results: [], shown: 8, q: '', market: 'kurly' },
   editing: null,
   overrideOpen: new Set(),
   // 요리 탭 — 편집 중인 요리와 그 안의 재료 검색 결과
   editingRecipe: null,
   recipeSaving: false,
-  recipeSearch: { results: [], q: '' },
+  recipeSearch: { results: [], q: '', market: 'kurly' },
   // 이번 주 장볼 목록 (컬리 로그인 없이)
   checklist: null,
   checklistSaving: false,
+  // 장볼 목록에서 지금 보고 있는 마켓 (컬리 | 오아시스)
+  checklistMarket: 'kurly',
 };
 
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
+const MARKET_LABEL = { kurly: '컬리', oasis: '오아시스' };
+const MARKET_SEARCH_PLACEHOLDER = {
+  kurly: '컬리 상품 검색 (예: 유정란, 사과)',
+  oasis: '오아시스 상품 검색 (예: 유정란, 사과)',
+};
 const BASE_FACTOR = { g: 1, kg: 1000, ml: 1, l: 1000 };
 const STATUS_TEXT = { added: '담음', merged: '합산', planned: '예정', skipped: '건너뜀', failed: '실패' };
 const STATUS_MARK = { added: '✅', merged: '➕', planned: '•', skipped: '⏭', failed: '❌', pending: '•' };
@@ -60,6 +67,46 @@ function el(tag, props = {}, children = []) {
 }
 
 const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+
+/** 상품·재료·목록 항목의 마켓 (없으면 컬리 — 예전에 저장한 데이터 그대로) */
+function marketOf(entity) {
+  return entity?.market === 'oasis' ? 'oasis' : 'kurly';
+}
+
+/** 마켓별 상품 페이지 (예전 저장값에 url 이 없을 때) */
+function productPageUrl(market, productNo) {
+  const no = Number(productNo);
+  return market === 'oasis'
+    ? `https://m.oasis.co.kr/product/detail/${no}`
+    : `https://www.kurly.com/goods/${no}`;
+}
+
+/** 컬리/오아시스 배지 — 목록·카드에서 어느 마켓 상품인지 바로 보이게 */
+function marketBadge(market, extraClass = '') {
+  const m = market === 'oasis' ? 'oasis' : 'kurly';
+  return el('span', {
+    class: `market-badge ${m}${extraClass ? ` ${extraClass}` : ''}`,
+    text: MARKET_LABEL[m],
+  });
+}
+
+/** 상품 이름에서 한 단위 크기를 추정합니다. (오아시스 상세에는 용량 항목이 없어 이름으로 추정) */
+const UNIT_PATTERN = /(\d+(?:\.\d+)?)\s*(kg|g|ml|l|구|입|개|팩|봉|미|마리|장|병|캔|봉지|포)/i;
+function guessUnit(...candidates) {
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const m = String(raw).match(UNIT_PATTERN);
+    if (!m) continue;
+    const size = Number(m[1]);
+    if (!Number.isFinite(size) || size <= 0) continue;
+    let label = m[2];
+    const lower = label.toLowerCase();
+    if (lower === 'l') label = 'L';
+    else if (lower !== 'kg' && lower !== 'g' && lower !== 'ml') label = label === '봉지' ? '봉' : label === '포' ? '팩' : label;
+    return { unitSize: size, unitLabel: label };
+  }
+  return { unitSize: 1, unitLabel: '개' };
+}
 
 function toBase(amount, label) {
   const f = BASE_FACTOR[String(label ?? '').toLowerCase()];
@@ -355,8 +402,10 @@ function renderPlan() {
         thumb,
         el('div', { class: 'plan-main' }, [
           el('p', { class: 'plan-name' }, [
+            marketBadge(marketOf(item), 'sm'),
+            document.createTextNode(' '),
             el('a', {
-              href: item.url || `https://www.kurly.com/goods/${item.productNo}`,
+              href: item.url || productPageUrl(marketOf(item), item.productNo),
               target: '_blank',
               rel: 'noopener noreferrer',
               text: item.name,
@@ -476,11 +525,11 @@ function mergedPlannedCount({ includeRecipes = null } = {}) {
   const withRecipes =
     includeRecipes === null ? recipeSettingsClient().mergeWithRegularPlan !== false : includeRecipes;
   const keys = new Set();
-  activeItems().forEach((item) => keys.add(String(item.productNo)));
+  activeItems().forEach((item) => keys.add(`${marketOf(item)}:${item.productNo}`));
   if (withRecipes) {
     selectedRecipesClient().forEach((recipe) => {
       (recipe.ingredients || []).forEach((ingredient) => {
-        if (!ingredient.skippedThisWeek) keys.add(String(ingredient.productNo));
+        if (!ingredient.skippedThisWeek) keys.add(`${marketOf(ingredient)}:${ingredient.productNo}`);
       });
     });
   }
@@ -585,6 +634,7 @@ function recipeCard(recipe) {
   ingredients.forEach((ingredient) => {
     const skipped = ingredient.skippedThisWeek === true;
     const children = [
+      marketBadge(marketOf(ingredient), 'sm'),
       el('span', { class: 'name', text: ingredient.name }),
       el('span', { class: 'qty', text: `×${ingQty(ingredient)}` }),
       el('span', { class: 'price', text: won((Number(ingredient.price) || 0) * ingQty(ingredient)) }),
@@ -681,13 +731,14 @@ function openRecipeEditor(recipe = null) {
   state.editingRecipe = recipe
     ? JSON.parse(JSON.stringify(recipe))
     : { id: null, name: '', note: '', selectedForNextRun: true, ingredients: [] };
-  state.recipeSearch = { results: [], q: '' };
+  state.recipeSearch = { results: [], q: '', market: state.recipeSearch?.market || 'kurly' };
   $('#recipeSheetTitle').textContent = recipe ? '요리 수정' : '새 요리';
   $('#recipeName').value = state.editingRecipe.name || '';
   $('#recipeNote').value = state.editingRecipe.note || '';
   $('#recipeSearchInput').value = '';
   $('#recipeSearchStatus').hidden = true;
   $('#recipeSearchResults').textContent = '';
+  applyMarketUI();
   renderRecipeEdit();
   $('#recipeSheet').hidden = false;
   setTimeout(() => $('#recipeName').focus(), 150);
@@ -696,7 +747,7 @@ function openRecipeEditor(recipe = null) {
 function closeRecipeEditor() {
   $('#recipeSheet').hidden = true;
   state.editingRecipe = null;
-  state.recipeSearch = { results: [], q: '' };
+  state.recipeSearch = { results: [], q: '', market: state.recipeSearch?.market || 'kurly' };
 }
 
 function renderRecipeEdit() {
@@ -736,8 +787,8 @@ function renderRecipeEdit() {
       el('li', { class: 'recipe-ing-row' }, [
         thumb,
         el('div', { class: 'info' }, [
-          el('p', { class: 'nm', text: ingredient.name }),
-          el('p', { class: 'pr', text: `${won(ingredient.price)} · ${ingredient.volume || '컬리 상품'}` }),
+          el('p', { class: 'nm' }, [marketBadge(marketOf(ingredient), 'sm'), document.createTextNode(ingredient.name)]),
+          el('p', { class: 'pr', text: `${won(ingredient.price)} · ${ingredient.volume || `${MARKET_LABEL[marketOf(ingredient)]} 상품`}` }),
           el('div', { class: 'qty-stepper' }, [minus, el('span', { text: String(ingQty(ingredient)) }), plus]),
         ]),
         el('button', {
@@ -756,14 +807,19 @@ function renderRecipeEdit() {
   });
 }
 
-function recipeHasProduct(productNo) {
-  return (state.editingRecipe?.ingredients || []).some((i) => Number(i.productNo) === Number(productNo));
+function recipeHasProduct(market, productNo) {
+  return (state.editingRecipe?.ingredients || []).some(
+    (i) => marketOf(i) === market && Number(i.productNo) === Number(productNo)
+  );
 }
 
 function addIngredientFromProduct(product) {
   const draft = state.editingRecipe;
   if (!draft) return;
-  const existing = (draft.ingredients || []).find((i) => Number(i.productNo) === Number(product.no));
+  const market = marketOf(product);
+  const existing = (draft.ingredients || []).find(
+    (i) => marketOf(i) === market && Number(i.productNo) === Number(product.no)
+  );
   if (existing) {
     existing.quantity = Math.min(99, ingQty(existing) + 1);
     renderRecipeEdit();
@@ -774,13 +830,14 @@ function addIngredientFromProduct(product) {
   draft.ingredients = [
     ...(draft.ingredients || []),
     {
-      id: `ing-${product.no}-${Date.now().toString(36)}`,
+      id: `ing-${market}-${product.no}-${Date.now().toString(36)}`,
+      market,
       productNo: product.no,
       dealProductNo: null,
       name: product.name,
       price: Number(product.price) || 0,
       imageUrl: product.imageUrl || null,
-      url: product.url || `https://www.kurly.com/goods/${product.no}`,
+      url: product.url || productPageUrl(market, product.no),
       volume: product.shortDescription || null,
       quantity: 1,
       skippedThisWeek: false,
@@ -797,14 +854,15 @@ function renderRecipeResults() {
   box.textContent = '';
   const results = (state.recipeSearch.results || []).slice(0, 8);
   results.forEach((product) => {
-    const added = recipeHasProduct(product.no);
+    const market = marketOf(product);
+    const added = recipeHasProduct(market, product.no);
     const thumb = product.imageUrl
       ? el('img', { class: 'product-thumb', src: product.imageUrl, alt: '', loading: 'lazy' })
       : el('div', { class: 'product-thumb' });
     const addBtn = el('button', {
       type: 'button',
       class: 'btn btn-primary',
-      text: product.soldOut ? '품절' : added ? '추가됨 (+)' : '재료로 추가',
+      text: product.soldOut ? '품절' : added ? '추가됨 (+)' : '+ 재료로 추가',
       onclick: () => addIngredientFromProduct(product),
     });
     addBtn.disabled = Boolean(product.soldOut);
@@ -812,7 +870,7 @@ function renderRecipeResults() {
       el('article', { class: 'product-card compact' }, [
         thumb,
         el('div', { class: 'product-body' }, [
-          el('p', { class: 'product-name', text: product.name }),
+          el('p', { class: 'product-name' }, [marketBadge(market, 'sm'), document.createTextNode(product.name)]),
           product.shortDescription ? el('p', { class: 'product-desc', text: product.shortDescription }) : null,
           el('p', { class: 'product-price', text: won(product.price) }),
           addBtn,
@@ -825,19 +883,21 @@ function renderRecipeResults() {
 async function doRecipeSearch(keyword) {
   const q = String(keyword ?? '').trim();
   if (!q) return;
+  const market = state.recipeSearch.market;
   state.recipeSearch.q = q;
   const status = $('#recipeSearchStatus');
   status.hidden = false;
   status.className = 'search-status';
-  status.textContent = '컬리에서 재료를 찾는 중…';
+  status.textContent = `${MARKET_LABEL[market]}에서 재료를 찾는 중…`;
   $('#recipeSearchBtn').disabled = true;
   try {
-    const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}&market=${market}`);
+    if (state.recipeSearch.market !== market || state.recipeSearch.q !== q) return;
     state.recipeSearch.results = data.products || [];
     renderRecipeResults();
     status.textContent = state.recipeSearch.results.length
-      ? `‘${q}’ 검색 결과 ${state.recipeSearch.results.length}개`
-      : `‘${q}’ 검색 결과가 없어요. 다른 재료명으로 찾아보세요.`;
+      ? `${MARKET_LABEL[market]} ‘${q}’ 검색 결과 ${state.recipeSearch.results.length}개`
+      : `${MARKET_LABEL[market]} ‘${q}’ 검색 결과가 없어요. 다른 재료명이나 다른 마켓으로 찾아보세요.`;
   } catch (err) {
     state.recipeSearch.results = [];
     renderRecipeResults();
@@ -900,7 +960,7 @@ async function runRecipesOnly() {
   }
   const kurly = state.status?.kurly || { status: 'disconnected' };
   if (kurly.status !== 'connected' || state.plan?.checklistOnly === true) {
-    toast('아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
+    toast('아래 장볼 목록의 [컬리에서 열기]·[오아시스에서 열기]로 하나씩 담아 주세요.');
     const card = $('#checklistCard');
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     refreshChecklist();
@@ -929,6 +989,24 @@ function renderChecklist() {
   const list = state.checklist;
   const box = $('#checklistList');
   if (!box) return;
+
+  const market = state.checklistMarket === 'oasis' ? 'oasis' : 'kurly';
+  const items = list?.items || [];
+  const counts = list?.marketCounts || {
+    kurly: items.filter((i) => marketOf(i) === 'kurly').length,
+    oasis: items.filter((i) => marketOf(i) === 'oasis').length,
+  };
+  // 마켓 pill 에 개수를 함께 보여 줍니다 (컬리 2 · 오아시스 2)
+  const kCount = $('#checklistKurlyCount');
+  const oCount = $('#checklistOasisCount');
+  if (kCount) kCount.textContent = String(counts.kurly || 0);
+  if (oCount) oCount.textContent = String(counts.oasis || 0);
+  $$('#checklistMarketPills .market-pill').forEach((btn) => {
+    const active = btn.dataset.market === market;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
   if (!list) {
     $('#checklistMeta').textContent = '';
     return;
@@ -942,15 +1020,25 @@ function renderChecklist() {
   const only = state.plan?.checklistOnly === true;
   $('#checklistHint').textContent = only
     ? '목록 알림 모드예요. 정기 실행일에는 목록만 알려드려요. 다 담은 뒤 [이번 주 장보기 완료]를 누르면 체크와 이번 주 요리 선택이 함께 정리돼요.'
-    : '컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]로 상품을 열고, 담은 것은 체크해 두세요. 다 담으면 [이번 주 장보기 완료].';
+    : '컬리 로그인 없이도 장볼 수 있어요. [컬리에서 열기]·[오아시스에서 열기]로 상품을 열고, 담은 것은 체크해 두세요. 다 담으면 [이번 주 장보기 완료].';
+
+  // 고른 마켓의 상품만 보여 줍니다.
+  const visible = items.filter((item) => marketOf(item) === market);
 
   box.textContent = '';
-  $('#checklistEmpty').hidden = list.count > 0;
-  list.items.forEach((item) => {
+  $('#checklistEmpty').hidden = visible.length > 0;
+  $('#checklistEmpty').textContent =
+    market === 'oasis'
+      ? '오아시스 상품이 아직 없어요. 상품 검색에서 마켓을 [오아시스]로 바꿔 담아 보세요.'
+      : '컬리 상품이 아직 없어요. 계획에 상품을 담거나 요리를 선택해 주세요.';
+
+  visible.forEach((item) => {
+    const itemMarket = marketOf(item);
+    const isOasis = itemMarket === 'oasis';
     const checkbox = el('input', {
       type: 'checkbox',
       'aria-label': `${item.name} 담음`,
-      onchange: (event) => toggleChecklistItem(item.productNo, event.target.checked),
+      onchange: (event) => toggleChecklistItem(item.productNo, event.target.checked, itemMarket),
     });
     checkbox.checked = item.checked === true;
 
@@ -966,17 +1054,17 @@ function renderChecklist() {
     if (item.volume) subBits.push(item.volume);
 
     box.appendChild(
-      el('li', { class: `check-item${item.checked ? ' checked' : ''}` }, [
+      el('li', { class: `check-item${item.checked ? ' checked' : ''}${isOasis ? ' oasis' : ''}` }, [
         el('label', { class: 'check-box', title: '담음' }, [checkbox, el('i')]),
         el('div', { class: 'check-main' }, [
           nameLine,
           subBits.length ? el('p', { class: 'check-sub', text: subBits.join(' · ') }) : null,
           el('a', {
-            class: 'check-open',
-            href: item.url || `https://www.kurly.com/goods/${item.productNo}`,
+            class: `check-open${isOasis ? ' oasis' : ''}`,
+            href: item.url || productPageUrl(itemMarket, item.productNo),
             target: '_blank',
             rel: 'noopener noreferrer',
-            text: '컬리에서 열기 ↗',
+            text: isOasis ? '오아시스에서 열기 ↗' : '컬리에서 열기 ↗',
           }),
         ]),
       ])
@@ -997,18 +1085,25 @@ async function refreshChecklist() {
     const data = await api('/api/checklist');
     state.checklist = data.checklist;
     if (state.plan) state.plan.checklistOnly = data.checklistOnly === true;
+    // 지금 보고 있는 마켓이 비었는데 다른 마켓에 상품이 있으면, 빈 화면 대신 그쪽을 보여 줍니다.
+    // (마켓 pill 을 직접 누를 때는 고른 마켓 그대로 — 비어 있으면 안내 문구를 보여 줍니다.)
+    const counts = data.checklist?.marketCounts || {};
+    if ((counts[state.checklistMarket] || 0) === 0) {
+      const other = state.checklistMarket === 'oasis' ? 'kurly' : 'oasis';
+      if ((counts[other] || 0) > 0) state.checklistMarket = other;
+    }
     renderChecklist();
   } catch {
     /* 표시용이라 실패는 무시 */
   }
 }
 
-async function toggleChecklistItem(productNo, checked) {
+async function toggleChecklistItem(productNo, checked, market = 'kurly') {
   if (state.checklistSaving) return;
   state.checklistSaving = true;
   renderChecklist();
   try {
-    const data = await api('/api/checklist/check', { method: 'POST', body: { productNo, checked } });
+    const data = await api('/api/checklist/check', { method: 'POST', body: { market, productNo, checked } });
     state.checklist = data.checklist;
     if (data.plan && state.plan) state.plan.checklistSummary = data.plan.checklistSummary;
     renderChecklist();
@@ -1224,7 +1319,8 @@ function renderRun() {
 
   let hint = '정기 실행일을 기다리지 않고 바로 담아볼 수 있어요.';
   if (!planned) hint = '먼저 계획에 상품을 담거나 요리를 선택해 주세요.';
-  else if (listOnly) hint = '컬리 로그인 없이도 아래 [이번 주 장볼 목록]에서 [컬리에서 열기]로 담을 수 있어요.';
+  else if (listOnly)
+    hint = '컬리 로그인 없이도 아래 [이번 주 장볼 목록]에서 [컬리에서 열기]·[오아시스에서 열기]로 담을 수 있어요.';
   else if (state.plan?.schedule) hint = `다음 정기 실행 ${nextRunLabelFor(state.plan.schedule)}`;
   $('#runHint').textContent = hint;
 
@@ -1402,7 +1498,7 @@ async function pollStatus() {
       const last = state.status?.lastRun || state.runs[0];
       if (last) {
         if (last.status === 'checklist') {
-          toast(`장볼 목록 ${(last.items || []).length}개를 준비했어요. [컬리에서 열기]로 담아 주세요.`);
+          toast(`장볼 목록 ${(last.items || []).length}개를 준비했어요. 목록에서 상품을 열어 담아 주세요.`);
         } else if (last.status === 'success') toast(`담기 완료! ${last.added + last.merged}개 상품을 담았어요.`);
         else if (last.status === 'partial') toast(`${last.failed}개 상품은 담지 못했어요. 기록을 확인해 주세요.`, true);
         else if (last.error) toast(last.error, true);
@@ -1438,11 +1534,78 @@ function stopPolling() {
 function openSearch() {
   $('#searchSheet').hidden = false;
   $('#searchStatus').hidden = true;
+  applyMarketUI();
   setTimeout(() => $('#searchInput').focus(), 120);
 }
 
 function closeSearch() {
   $('#searchSheet').hidden = true;
+}
+
+/* ── 마켓 고르기 (컬리 | 오아시스) ── */
+
+/** 지금 고른 마켓에 맞춰 pill·검색창 문구·버튼 색을 함께 바꿉니다. */
+function applyMarketUI() {
+  const s = state.search.market === 'oasis' ? 'oasis' : 'kurly';
+  const r = state.recipeSearch.market === 'oasis' ? 'oasis' : 'kurly';
+
+  $$('#searchMarketPills .market-pill').forEach((btn) => {
+    const active = btn.dataset.market === s;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  $$('#recipeMarketPills .market-pill').forEach((btn) => {
+    const active = btn.dataset.market === r;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  const searchInput = $('#searchInput');
+  if (searchInput) searchInput.placeholder = MARKET_SEARCH_PLACEHOLDER[s];
+  const recipeInput = $('#recipeSearchInput');
+  if (recipeInput) recipeInput.placeholder = `${MARKET_LABEL[r]} 재료 검색 (예: 두부, 애호박)`;
+
+  // 오아시스는 초록(#2D6A4F), 컬리는 보라(#5F0080) — 어느 마켓에서 찾는지 색으로도 구분합니다.
+  $('#searchBtn').classList.toggle('btn-oasis', s === 'oasis');
+  $('#recipeSearchBtn').classList.toggle('btn-oasis', r === 'oasis');
+  $('#searchSheet').classList.toggle('market-oasis', s === 'oasis');
+  $('#recipeSheet').classList.toggle('market-oasis', r === 'oasis');
+}
+
+/** 상품 검색의 마켓 바꾸기 — 검색어가 있으면 그 마켓에서 다시 찾아 줍니다. */
+function switchSearchMarket(market) {
+  const next = market === 'oasis' ? 'oasis' : 'kurly';
+  if (state.search.market === next) return;
+  state.search.market = next;
+  state.search.results = [];
+  state.search.shown = 8;
+  renderResults();
+  applyMarketUI();
+  const q = $('#searchInput').value.trim() || state.search.q;
+  if (q) {
+    $('#searchInput').value = q;
+    doSearch(q);
+  } else {
+    $('#searchStatus').hidden = true;
+    $('#searchInput').focus();
+  }
+}
+
+/** 요리 재료 검색의 마켓 바꾸기 */
+function switchRecipeMarket(market) {
+  const next = market === 'oasis' ? 'oasis' : 'kurly';
+  if (state.recipeSearch.market === next) return;
+  state.recipeSearch.market = next;
+  state.recipeSearch.results = [];
+  renderRecipeResults();
+  applyMarketUI();
+  const q = $('#recipeSearchInput').value.trim() || state.recipeSearch.q;
+  if (q) {
+    $('#recipeSearchInput').value = q;
+    doRecipeSearch(q);
+  } else {
+    $('#recipeSearchStatus').hidden = true;
+  }
 }
 
 function renderResults() {
@@ -1455,7 +1618,9 @@ function renderResults() {
       ? el('img', { class: 'product-thumb', src: p.imageUrl, alt: '', loading: 'lazy' })
       : el('div', { class: 'product-thumb' });
 
+    const market = marketOf(p);
     const badges = el('div', { class: 'product-badges' }, [
+      marketBadge(market),
       p.discountRate ? el('span', { class: 'badge', text: `${Math.round(p.discountRate)}% 할인` }) : null,
       p.multiplePrice ? el('span', { class: 'badge', text: '옵션 있음' }) : null,
       p.soldOut ? el('span', { class: 'badge soldout', text: '품절' }) : null,
@@ -1464,10 +1629,12 @@ function renderResults() {
     const addBtn = el('button', {
       type: 'button',
       class: 'btn btn-primary',
-      text: p.soldOut ? '품절' : '계획에 추가',
+      text: p.soldOut ? '품절' : '+ 추가',
       onclick: () => openAddModal(p),
     });
-    addBtn.disabled = Boolean(p.soldOut) || state.plan?.items?.some((i) => i.productNo === p.no);
+    addBtn.disabled =
+      Boolean(p.soldOut) ||
+      (state.plan?.items || []).some((i) => marketOf(i) === market && Number(i.productNo) === Number(p.no));
 
     box.appendChild(
       el('article', { class: 'product-card' }, [
@@ -1495,20 +1662,23 @@ function renderResults() {
 async function doSearch(keyword) {
   const q = String(keyword ?? '').trim();
   if (!q) return;
+  const market = state.search.market;
   state.search.q = q;
   const status = $('#searchStatus');
   status.hidden = false;
   status.className = 'search-status';
-  status.textContent = '컬리에서 상품을 찾는 중…';
+  status.textContent = `${MARKET_LABEL[market]}에서 상품을 찾는 중…`;
   $('#searchBtn').disabled = true;
   try {
-    const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}&market=${market}`);
+    // 마켓을 바꾼 뒤 도착한 예전 응답은 버립니다.
+    if (state.search.market !== market || state.search.q !== q) return;
     state.search.results = data.products || [];
     state.search.shown = 8;
     renderResults();
     status.textContent = state.search.results.length
-      ? `‘${q}’ 검색 결과 ${state.search.results.length}개`
-      : `‘${q}’ 검색 결과가 없어요. 다른 검색어로 찾아보세요.`;
+      ? `${MARKET_LABEL[market]} ‘${q}’ 검색 결과 ${state.search.results.length}개`
+      : `${MARKET_LABEL[market]} ‘${q}’ 검색 결과가 없어요. 다른 검색어나 다른 마켓으로 찾아보세요.`;
   } catch (err) {
     state.search.results = [];
     renderResults();
@@ -1522,7 +1692,8 @@ async function doSearch(keyword) {
 /* ─────────────── 상품 추가 모달 ─────────────── */
 
 async function openAddModal(product) {
-  state.editing = { product, detail: null, optionName: null, unitSize: 1, unitLabel: '개', consumption: 1 };
+  const market = marketOf(product);
+  state.editing = { product, market, detail: null, optionName: null, unitSize: 1, unitLabel: '개', consumption: 1 };
   const modal = $('#addModal');
   const body = $('#addModalBody');
   modal.hidden = false;
@@ -1532,19 +1703,22 @@ async function openAddModal(product) {
 
   let detail = null;
   try {
-    const data = await api(`/api/product?no=${product.no}`);
+    const data = await api(`/api/product?no=${product.no}&market=${market}`);
     detail = data.product;
   } catch (err) {
     toast('상품 상세를 불러오지 못했어요. 검색 결과 정보로 계속합니다.', true);
   }
 
-  const suggestion = detail?.unitSuggestion || { unitSize: 1, unitLabel: '개' };
+  // 오아시스 상세에는 용량 항목이 없어 상품 이름에서 단위를 추정합니다.
+  const suggestion =
+    detail?.unitSuggestion || (market === 'oasis' ? guessUnit(product.name, product.shortDescription) : { unitSize: 1, unitLabel: '개' });
   const options = (detail?.options || []).filter((o) => !o.soldOut);
   const names = options.map((o) => o.name);
   const defaultOption = names.find((n) => !/컬리멤버스/.test(n)) ?? names[0] ?? null;
 
   state.editing = {
     product,
+    market,
     detail,
     optionName: names.length > 1 ? defaultOption : null,
     unitSize: suggestion.unitSize,
@@ -1600,7 +1774,7 @@ async function openAddModal(product) {
     el('div', { class: 'modal-product' }, [
       product.imageUrl ? el('img', { src: product.imageUrl, alt: '' }) : el('div', { class: 'product-thumb' }),
       el('div', {}, [
-        el('p', { class: 'pname', text: product.name }),
+        el('p', { class: 'pname' }, [marketBadge(market, 'sm'), document.createTextNode(product.name)]),
         el('p', {
           class: 'pprice',
           text: `${won(detail?.price ?? product.price)}${detail?.volume ? ` · ${detail.volume}` : ''}${detail?.salesUnit ? ` · ${detail.salesUnit}` : ''}`,
@@ -1654,17 +1828,19 @@ function confirmAdd() {
   }
   const detail = e.detail;
   const option = (detail?.options || []).find((o) => o.name === e.optionName);
+  const market = e.market === 'oasis' ? 'oasis' : 'kurly';
   const item = {
-    id: `item-${e.product.no}-${Date.now().toString(36)}`,
+    id: `item-${market}-${e.product.no}-${Date.now().toString(36)}`,
+    market,
     productNo: e.product.no,
     dealProductNo: option?.dealProductNo ?? detail?.options?.[0]?.dealProductNo ?? null,
     name: e.product.name,
-    shortDescription: detail?.shortDescription ?? e.product.shortDescription ?? '',
+    shortDescription: detail?.shortDescription || e.product.shortDescription || '',
     imageUrl: e.product.imageUrl ?? null,
     price: detail?.price ?? e.product.price ?? 0,
     unitPriceText: detail?.unitPriceText ?? null,
     volume: detail?.volume ?? null,
-    url: e.product.url,
+    url: e.product.url || detail?.url,
     unitSize: e.unitSize,
     unitLabel: e.unitLabel,
     consumption: e.consumption,
@@ -1675,7 +1851,10 @@ function confirmAdd() {
   };
 
   const exists = (state.plan?.items || []).some(
-    (i) => i.productNo === item.productNo && (i.optionName || null) === (item.optionName || null)
+    (i) =>
+      marketOf(i) === market &&
+      Number(i.productNo) === Number(item.productNo) &&
+      (i.optionName || null) === (item.optionName || null)
   );
   if (exists) {
     toast('이미 계획에 있는 상품이에요.', true);
@@ -1702,7 +1881,7 @@ async function runNow() {
   const kurly = state.status?.kurly || { status: 'disconnected' };
   if (kurly.status !== 'connected' || state.plan?.checklistOnly === true) {
     // 컬리 로그인이 없거나 '목록 알림만 받기' 모드면 담는 대신 장볼 목록으로 안내합니다.
-    toast('아래 장볼 목록의 [컬리에서 열기]로 하나씩 담아 주세요.');
+    toast('아래 장볼 목록의 [컬리에서 열기]·[오아시스에서 열기]로 하나씩 담아 주세요.');
     const card = $('#checklistCard');
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     refreshChecklist();
@@ -2414,6 +2593,22 @@ function bindEvents() {
   $('#installHintClose').addEventListener('click', () => {
     $('#installHint').hidden = true;
     localStorage.setItem('kurly.installHintDismissed', '1');
+  });
+
+  // 마켓 고르기 (컬리 | 오아시스)
+  $('#searchMarketPills').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-market]');
+    if (btn) switchSearchMarket(btn.dataset.market);
+  });
+  $('#recipeMarketPills').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-market]');
+    if (btn) switchRecipeMarket(btn.dataset.market);
+  });
+  $('#checklistMarketPills').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-market]');
+    if (!btn) return;
+    state.checklistMarket = btn.dataset.market === 'oasis' ? 'oasis' : 'kurly';
+    renderChecklist();
   });
 
   // 실행
