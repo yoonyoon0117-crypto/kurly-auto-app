@@ -8,7 +8,7 @@
  *  · push: 서버가 보낸 웹 푸시를 알림으로 표시 (iOS 16.4+ 홈 화면 앱)
  *  · notificationclick: 앱을 열거나 이미 열린 창을 앞으로 가져옵니다.
  */
-const VERSION = 'kurly-v2.3.9';
+const VERSION = 'kurly-v2.3.10';
 const SHELL = [
   '/',
   '/index.html',
@@ -130,7 +130,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // 아이콘·매니페스트·이미지 등 나머지 정적 파일은 캐시 우선입니다.
-  // 주소에 붙는 버전 표시(?v=2.3.9)는 같은 파일을 가리키므로 캐시를 찾을 때는 무시하고,
+  // 주소에 붙는 버전 표시(?v=2.3.10)는 같은 파일을 가리키므로 캐시를 찾을 때는 무시하고,
   // 캐시에는 버전 표시를 뺀 주소로 저장해 사본이 쌓이지 않게 합니다.
   const cacheKey = new URL(url.pathname, self.location.origin).href;
   event.respondWith(

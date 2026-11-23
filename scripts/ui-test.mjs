@@ -121,7 +121,7 @@ async function main() {
     check(await page.isVisible('#authNickname'), '로그인/회원가입 화면이 보인다');
     check((await page.title()) === 'Cart helper🤍', '페이지 제목', await page.title());
     const manifestHref = await page.getAttribute('link[rel="manifest"]', 'href');
-    check(manifestHref === '/manifest.json?v=2.3.9', 'PWA 매니페스트 연결', manifestHref || '');
+    check(manifestHref === '/manifest.json?v=2.3.10', 'PWA 매니페스트 연결', manifestHref || '');
     check(
       (await page.getAttribute('meta[name="apple-mobile-web-app-capable"]', 'content')) === 'yes',
       'iOS 홈 화면 추가 메타 태그'
