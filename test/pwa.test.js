@@ -31,11 +31,11 @@ test('앱 껍데기(/) — iOS PWA 메타 태그와 매니페스트 링크', asy
   assert.match(res.headers.get('content-type'), /text\/html/);
   assert.match(res.text, /<html lang="ko">/);
   assert.match(res.text, /<title>Cart helper🤍<\/title>/);
-  assert.match(res.text, /rel="manifest" href="\/manifest.json\?v=2\.3\.10"/);
+  assert.match(res.text, /rel="manifest" href="\/manifest.json\?v=2\.4\.0"/);
   assert.match(res.text, /apple-mobile-web-app-capable" content="yes"/);
   assert.match(res.text, /apple-mobile-web-app-title" content="Cart helper🤍"/);
-  assert.match(res.text, /rel="apple-touch-icon" href="\/icons\/apple-touch-icon.png\?v=2\.3\.10"/);
-  assert.match(res.text, /rel="icon" type="image\/png" sizes="192x192" href="\/icons\/icon-192.png\?v=2\.3\.10"/);
+  assert.match(res.text, /rel="apple-touch-icon" href="\/icons\/apple-touch-icon.png\?v=2\.4\.0"/);
+  assert.match(res.text, /rel="icon" type="image\/png" sizes="192x192" href="\/icons\/icon-192.png\?v=2\.4\.0"/);
   // 로그인 화면 부제는 마켓 이름 없이
   assert.match(res.text, /1주에 한 번, 먹을 만큼만<br \/>장바구니에 담아둘게요\./);
   assert.match(res.text, /name="theme-color" content="#5F0080"/);
@@ -83,12 +83,12 @@ test('아이콘 PNG — 실제 크기와 파일 존재', async () => {
 });
 
 test('캐시 버스터(?v=)가 붙은 아이콘·매니페스트 주소도 그대로 제공된다', async () => {
-  const apple = await request(server.baseUrl, '/icons/apple-touch-icon.png?v=2.3.10');
+  const apple = await request(server.baseUrl, '/icons/apple-touch-icon.png?v=2.4.0');
   assert.equal(apple.status, 200);
   assert.match(apple.headers.get('content-type'), /image\/png/);
   assert.ok(Number(apple.headers.get('content-length')) > 1000);
 
-  const manifest = await request(server.baseUrl, '/manifest.json?v=2.3.10');
+  const manifest = await request(server.baseUrl, '/manifest.json?v=2.4.0');
   assert.equal(manifest.status, 200);
   const parsed = JSON.parse(manifest.text);
   assert.equal(parsed.name, 'Cart helper🤍');

@@ -39,6 +39,10 @@ const APP_NAME = '정기 장바구니';
 const VERSION = require('./package.json').version;
 const PORT = Number(process.env.PORT) || 3000;
 
+// 개인용(1인) 모드에서 쓰는 기본 계정 — 로그인 없이 바로 이 계정으로 엽니다.
+const PERSONAL_USER_ID = 'personal';
+const PERSONAL_USER_NICKNAME = '개인';
+
 /* ─────────────── 시작 전 점검 ─────────────── */
 
 function ensureSecrets(logger) {
@@ -166,7 +170,15 @@ async function addStarterItems(user) {
 
 /* ─────────────── 앱 만들기 ─────────────── */
 
-function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('SCHEDULER', true), verifyKurlySession = null, loginKurly = null } = {}) {
+function createApp({
+  logger = createLogger('app'),
+  schedulerEnabled = envBool('SCHEDULER', true),
+  verifyKurlySession = null,
+  loginKurly = null,
+  // 개인용 모드(기본): false 면 로그인 화면 없이 'personal' 계정으로 바로 엽니다.
+  // REQUIRE_AUTH=true 로 바꾸면 예전처럼 초대 코드 로그인·회원가입 화면이 돌아옵니다.
+  requireAuth = envBool('REQUIRE_AUTH', false),
+} = {}) {
   ensureSecrets(logger);
   store.ensureDirs();
 
@@ -346,10 +358,50 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
     return user;
   }
 
-  function requireUser(req) {
+  /* ─────────────── 개인용(1인) 모드 ─────────────── */
+
+  // 여러 요청이 동시에 들어와도 기본 계정을 한 번만 만들도록 합니다.
+  let personalUserPromise = null;
+
+  async function ensurePersonalUser() {
+    const existing = store.getUser(PERSONAL_USER_ID);
+    if (existing) return existing;
+    if (!personalUserPromise) {
+      personalUserPromise = (async () => {
+        // 저장된 계정이 딱 하나뿐인 개인용 배포라면 그 계정을 이어서 씁니다.
+        // (로그인 쿠키를 잃어도 기존 계획·컬리 연결이 그대로 남도록)
+        const all = store.countUsers() === 1 ? store.listUsers() : [];
+        if (all.length === 1) {
+          const adopted = all[0];
+          if ((adopted.items || []).length) return adopted;
+          return (await addStarterItems(adopted)).user;
+        }
+        const created = await store.ensureUser({
+          userId: PERSONAL_USER_ID,
+          nickname: PERSONAL_USER_NICKNAME,
+          passwordHash: hashPassword(crypto.randomBytes(18).toString('hex')),
+        });
+        const added = await addStarterItems(created);
+        logger.info(`개인용 모드: 기본 계정 #${created.userId} 생성 (기본 상품 ${added.added}개)`);
+        return added.user;
+      })().finally(() => {
+        personalUserPromise = null;
+      });
+    }
+    return personalUserPromise;
+  }
+
+  /**
+   * 요청의 사용자. 세션 쿠키가 없거나 만료됐어도 개인용 모드면 기본 계정을 붙입니다.
+   * (앱을 다시 열거나 Railway 가 재시작해 세션이 사라져도 로그인 화면이 나오지 않습니다)
+   */
+  async function resolveUser(req, res) {
     const user = currentUser(req);
-    if (!user) throw new HttpError(401, '로그인이 필요합니다.');
-    return user;
+    if (user) return user;
+    if (requireAuth) return null;
+    const personal = await ensurePersonalUser();
+    setSession(req, res, personal.userId, Number(personal.sessionEpoch) || 1);
+    return personal;
   }
 
   function setSession(req, res, userId, epoch = 1) {
@@ -580,6 +632,8 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
           ok: true,
           service: 'kurly-auto-app',
           version: VERSION,
+          mode: requireAuth ? 'auth' : 'personal',
+          requireAuth,
           users: store.countUsers(),
           uptimeSec: Math.round(process.uptime()),
           time: new Date().toISOString(),
@@ -593,6 +647,9 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
           version: VERSION,
           inviteRequired: Boolean(process.env.INVITE_CODE),
           registrationOpen: Boolean(process.env.INVITE_CODE),
+          // false(기본)면 개인용 모드 — 화면이 로그인 없이 바로 열립니다.
+          requireAuth,
+          personalMode: !requireAuth,
         });
       }
 
@@ -620,21 +677,31 @@ function createApp({ logger = createLogger('app'), schedulerEnabled = envBool('S
         }
         if (pathname === '/api/auth/session' && method === 'GET') {
           // 로그인 전에도 200 으로 답해 첫 화면에서 불필요한 401 콘솔 오류를 만들지 않습니다.
-          const user = currentUser(req);
-          if (!user) return sendJson(res, 200, { ok: true, user: null, plan: null });
+          // 개인용 모드에서는 쿠키가 없어도 기본 계정을 붙여 바로 메인 화면으로 들어갑니다.
+          const user = await resolveUser(req, res);
+          if (!user) return sendJson(res, 200, { ok: true, user: null, plan: null, requireAuth });
           // 남은 기간이 7일 미만이면 쿠키를 자동 연장합니다(슬라이딩 세션).
           const payload = sessions.verifyToken(parseCookies(req)[sessions.COOKIE_NAME]);
           if (payload && sessions.needsRefresh(payload)) setSession(req, res, user.userId, user.sessionEpoch);
-          return sendJson(res, 200, { ok: true, user: publicUser(user), plan: planPayload(user) });
+          return sendJson(res, 200, { ok: true, user: publicUser(user), plan: planPayload(user), requireAuth });
+        }
+
+        // 개인용 모드의 자동 로그인 — 쿠키가 없거나 만료돼도 기본 계정 세션을 다시 붙여 줍니다.
+        if (pathname === '/api/auth/personal-session' && (method === 'POST' || method === 'GET')) {
+          // REQUIRE_AUTH=true(로그인 모드)에서는 없는 API 로 두어 예전 동작을 그대로 유지합니다.
+          if (requireAuth) throw new HttpError(404, '없는 API 입니다.');
+          const user = await resolveUser(req, res);
+          return sendJson(res, 200, { ok: true, personal: true, user: publicUser(user), plan: planPayload(user) });
         }
         if (pathname === '/api/auth/me' && method === 'GET') {
-          const user = currentUser(req);
+          const user = await resolveUser(req, res);
           if (!user) return sendJson(res, 401, { ok: false, error: '로그인이 필요합니다.' });
           return sendJson(res, 200, { ok: true, user: publicUser(user), plan: planPayload(user) });
         }
 
-        /* ── 이 아래는 로그인 필요 ── */
-        const user = requireUser(req);
+        /* ── 이 아래는 로그인 필요 (개인용 모드에서는 기본 계정) ── */
+        const user = await resolveUser(req, res);
+        if (!user) throw new HttpError(401, '로그인이 필요합니다.');
 
         if (pathname === '/api/plan' && method === 'GET') {
           return sendJson(res, 200, { ok: true, plan: planPayload(user) });

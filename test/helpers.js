@@ -23,6 +23,9 @@ function setupEnv(overrides = {}) {
   process.env.TRUST_PROXY = '1';
   process.env.REGISTER_RATE_LIMIT = '1000';
   process.env.LOGIN_RATE_LIMIT = '1000';
+  // 기존 테스트는 초대 코드 로그인·회원가입 화면(멀티유저) 동작을 확인합니다.
+  // 개인용 모드(REQUIRE_AUTH=false)는 test/api-personal-mode.test.js 에서 따로 검증합니다.
+  process.env.REQUIRE_AUTH = 'true';
   Object.assign(process.env, overrides);
   return root;
 }

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * 아이폰 크기(390×844)에서 실제 화면을 Playwright 로 조작하는 점검.
- *   회원가입(초대 코드) → 기본 8개 상품(컬리 4 + 오아시스 4) → 검색 → 추가 → 저장 → 새로고침 후 유지
+ *   0) 개인용 모드 — 로그인 화면 없이 바로 메인 · 기본 8개 상품 · 설정에 로그아웃 없음
+ *   1) 회원가입(초대 코드) → 기본 8개 상품(컬리 4 + 오아시스 4) → 검색 → 추가 → 저장 → 새로고침 후 유지
  *   콘솔 오류 0건 확인 + 단계별 스크린샷 저장
  *
  *   npm run test:ui
@@ -68,60 +69,148 @@ function check(condition, name, detail = '') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 아이폰 사파리와 같은 화면 크기·UA
+const MOBILE_CONTEXT = {
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 3,
+  isMobile: true,
+  hasTouch: true,
+  locale: 'ko-KR',
+  timezoneId: 'Asia/Seoul',
+  userAgent:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1',
+  serviceWorkers: 'allow',
+};
+
 async function main() {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
-  const app = createApp({ logger: QUIET, schedulerEnabled: false });
+  // 같은 데이터 폴더로 두 모드를 함께 띄웁니다.
+  //  · personalApp — 개인용 모드(기본값, REQUIRE_AUTH=false): 로그인 화면 없이 바로 열림
+  //  · app — 로그인 모드(REQUIRE_AUTH=true): 로그인·회원가입·로그아웃
+  const personalApp = createApp({ logger: QUIET, schedulerEnabled: false, requireAuth: false });
+  await new Promise((resolve) => personalApp.server.listen(0, '127.0.0.1', resolve));
+  const personalBaseUrl = `http://127.0.0.1:${personalApp.server.address().port}`;
+  const app = createApp({ logger: QUIET, schedulerEnabled: false, requireAuth: true });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const { port } = app.server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
 
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 3,
-    isMobile: true,
-    hasTouch: true,
-    locale: 'ko-KR',
-    timezoneId: 'Asia/Seoul',
-    userAgent:
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1',
-    serviceWorkers: 'allow',
-  });
+  const context = await browser.newContext(MOBILE_CONTEXT);
   const page = await context.newPage();
 
   const consoleErrors = [];
   const pageErrors = [];
-  page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
-  });
-  page.on('pageerror', (err) => pageErrors.push(String(err)));
-  page.on('requestfailed', (req) => {
-    // 컬리 이미지 CDN 등 외부 요청 실패는 화면 오류가 아니므로 기록만
-    if (req.url().startsWith(baseUrl)) consoleErrors.push(`request failed: ${req.url()}`);
-  });
+  function watchPage(target, origin) {
+    const label = origin === baseUrl ? 'auth' : 'personal';
+    target.on('dialog', (dialog) => dialog.accept().catch(() => {}));
+    target.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(`[${label}] ${msg.text()}`);
+    });
+    target.on('pageerror', (err) => pageErrors.push(`[${label}] ${String(err)}`));
+    target.on('requestfailed', (req) => {
+      // 컬리 이미지 CDN 등 외부 요청 실패는 화면 오류가 아니므로 기록만
+      if (req.url().startsWith(origin)) consoleErrors.push(`request failed: ${req.url()}`);
+    });
+  }
+  watchPage(page, baseUrl);
 
-  async function waitToastGone() {
-    await page
+  async function waitToastGone(target = page) {
+    await target
       .waitForFunction(() => document.querySelector('#toast').hidden, null, { timeout: 6000 })
       .catch(() => {});
   }
 
-  async function shot(name) {
+  async function shot(name, target = page) {
     const file = path.join(SHOT_DIR, name);
-    await page.screenshot({ path: file, fullPage: false, animations: 'disabled' });
+    await target.screenshot({ path: file, fullPage: false, animations: 'disabled' });
     shots.push(file);
     console.log(`  📸 ${file}`);
   }
 
   try {
+    console.log('\n0) 개인용 모드 — 로그인 화면 없이 바로 열림');
+    {
+      const pctx = await browser.newContext(MOBILE_CONTEXT);
+      const ppage = await pctx.newPage();
+      watchPage(ppage, personalBaseUrl);
+      await ppage.goto(personalBaseUrl, { waitUntil: 'domcontentloaded' });
+      await ppage.waitForSelector('#appView:not([hidden])', { timeout: 15000 });
+      check(await ppage.isHidden('#authView'), '개인용 모드: 로그인 화면이 뜨지 않는다');
+      check(!(await ppage.isVisible('#authNickname')), '개인용 모드: 닉네임·비밀번호 입력칸이 없다');
+      check((await ppage.title()) === 'Cart helper🤍', '개인용 모드: 페이지 제목', await ppage.title());
+
+      const pConfig = await ppage.evaluate(async () => (await fetch('/api/config')).json());
+      check(
+        pConfig.requireAuth === false && pConfig.personalMode === true && pConfig.version === '2.4.0',
+        '개인용 모드: /api/config — requireAuth:false · v2.4.0',
+        `requireAuth=${pConfig.requireAuth} · v${pConfig.version}`
+      );
+      const pSession = await ppage.evaluate(async () => (await fetch('/api/auth/session')).json());
+      check(pSession.user?.userId === 'personal', '개인용 모드: 기본 계정으로 자동 세션', pSession.user?.nickname || '');
+
+      await ppage.waitForSelector('.plan-item');
+      const pItems = await ppage.locator('.plan-item').count();
+      check(pItems === 4, '개인용 모드: 기본 8개 중 컬리 4개가 바로 보인다', `${pItems}개`);
+      check(
+        (await ppage.innerText('#statItems')).includes('8'),
+        '개인용 모드: 요약의 담을 상품 8개',
+        await ppage.innerText('#statItems')
+      );
+      await ppage.waitForTimeout(300);
+      await shot('00-personal-plan-390x844.png', ppage);
+
+      // 실행 탭 — 이번 주 장볼 목록도 바로 채워진다
+      await ppage.click('.tabbar [data-tab="run"]');
+      await ppage.waitForSelector('#screen-run:not([hidden])');
+      await ppage
+        .waitForFunction(() => document.querySelectorAll('#checklistList li').length > 0, null, { timeout: 10000 })
+        .catch(() => {});
+      const pChecklist = await ppage.locator('#checklistList li').count();
+      check(pChecklist === 4, '개인용 모드: 장볼 목록(컬리 4개)도 바로 채워진다', `${pChecklist}개`);
+
+      // 요리 탭
+      await ppage.click('.tabbar [data-tab="recipes"]');
+      await ppage.waitForSelector('#screen-recipes:not([hidden])');
+      check(await ppage.isVisible('#newRecipeBtn'), '개인용 모드: 요리 탭이 동작한다');
+
+      // 설정 탭 — 로그아웃 대신 '개인 사용 모드' 안내
+      await ppage.click('.tabbar [data-tab="settings"]');
+      await ppage.waitForSelector('#screen-settings:not([hidden])');
+      check((await ppage.innerText('#meNickname')).trim() === '개인', '개인용 모드: 내 계정 이름', (await ppage.innerText('#meNickname')).trim());
+      check(await ppage.isHidden('#logoutBtn'), '개인용 모드: 로그아웃 버튼 숨김');
+      check(
+        await ppage.isVisible('#personalModeNote'),
+        '개인용 모드: 개인 사용 모드 안내',
+        (await ppage.innerText('#personalModeNote')).trim()
+      );
+      await waitToastGone(ppage);
+      await shot('00-personal-settings-390x844.png', ppage);
+
+      // 새로고침해도 로그인 화면 없이 메인
+      await ppage.reload({ waitUntil: 'domcontentloaded' });
+      await ppage.waitForSelector('#appView:not([hidden])', { timeout: 15000 });
+      check(await ppage.isHidden('#authView'), '개인용 모드: 새로고침해도 메인 화면');
+      await pctx.close();
+
+      // 쿠키가 없는 새 기기(예: 사파리에서 처음 연 경우)도 바로 메인
+      const pctx2 = await browser.newContext(MOBILE_CONTEXT);
+      const ppage2 = await pctx2.newPage();
+      watchPage(ppage2, personalBaseUrl);
+      await ppage2.goto(personalBaseUrl, { waitUntil: 'domcontentloaded' });
+      await ppage2.waitForSelector('#appView:not([hidden])', { timeout: 15000 });
+      check(await ppage2.isHidden('#authView'), '개인용 모드: 쿠키 없는 새 기기도 로그인 없이 바로 열린다');
+      await ppage2.waitForSelector('.plan-item');
+      check((await ppage2.locator('.plan-item').count()) === 4, '개인용 모드: 새 기기에서도 기본 상품이 보인다');
+      await pctx2.close();
+    }
     console.log('\n1) 로그인 화면');
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#authView:not([hidden])');
     check(await page.isVisible('#authNickname'), '로그인/회원가입 화면이 보인다');
     check((await page.title()) === 'Cart helper🤍', '페이지 제목', await page.title());
     const manifestHref = await page.getAttribute('link[rel="manifest"]', 'href');
-    check(manifestHref === '/manifest.json?v=2.3.10', 'PWA 매니페스트 연결', manifestHref || '');
+    check(manifestHref === '/manifest.json?v=2.4.0', 'PWA 매니페스트 연결', manifestHref || '');
     check(
       (await page.getAttribute('meta[name="apple-mobile-web-app-capable"]', 'content')) === 'yes',
       'iOS 홈 화면 추가 메타 태그'
@@ -948,6 +1037,7 @@ async function main() {
   } finally {
     await browser.close().catch(() => {});
     await new Promise((resolve) => app.server.close(resolve));
+    await new Promise((resolve) => personalApp.server.close(resolve));
   }
 
   const passed = checks.filter((c) => c.ok).length;

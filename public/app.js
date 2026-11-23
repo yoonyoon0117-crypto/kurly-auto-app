@@ -1,7 +1,7 @@
 'use strict';
 /**
  * 정기 장바구니 — 화면 로직
- *  · 로그인/회원가입(초대 코드) → 계획 · 실행 · 설정 3개 탭
+ *  · 개인용 모드(기본) — 로그인 화면 없이 바로 메인 / 로그인 모드(REQUIRE_AUTH=true) — 로그인·회원가입(초대 코드)
  *  · 계획은 "1주 소비량 → 담을 수량" 자동 계산, 저장 버튼으로 서버에 반영
  *  · 실행 화면은 지금 담기 / 미리보기 / 실행 기록, 진행 상황은 /api/status 폴링
  */
@@ -39,6 +39,8 @@ const state = {
   planMarket: 'kurly',
   // 사용자가 계획 탭에서 마켓 pill 을 직접 눌렀는지 — 그 전에는 빈 마켓을 건너뜁니다.
   planMarketTouched: false,
+  // 개인용 모드(REQUIRE_AUTH=false): 로그인 화면 없이 기본 계정으로 바로 열립니다.
+  personalMode: false,
 };
 
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
@@ -290,7 +292,12 @@ async function api(path, options = {}) {
     body = null;
   }
   if (res.status === 401) {
-    showAuth();
+    // 개인용 모드에서는 세션이 만료돼도 로그인 화면 대신 기본 계정으로 다시 붙습니다.
+    if (state.personalMode && !opts.retriedPersonal && path !== '/api/auth/personal-session') {
+      const restored = await autoPersonalSession();
+      if (restored) return api(path, { ...options, retriedPersonal: true });
+    }
+    if (!state.personalMode) showAuth();
     throw new Error(body?.error || '로그인이 필요합니다.');
   }
   if (!res.ok || body?.ok === false) {
@@ -304,11 +311,24 @@ async function api(path, options = {}) {
 
 /* ─────────────── 화면 전환 ─────────────── */
 
-function showAuth() {
+function showAuth({ force = false } = {}) {
+  // 개인용 모드에서는 로그인 화면을 아예 보여 주지 않습니다.
+  // (서버가 응답하지 않는 마지막 상황에서만 force 로 로그인 화면을 대신 보여 줍니다)
+  if (state.personalMode && !force) return;
   $('#boot').hidden = true;
   $('#appView').hidden = true;
   $('#authView').hidden = false;
   stopPolling();
+}
+
+/** 개인용 모드 설정을 화면에 반영 — 로그아웃 버튼 대신 '개인 사용 모드' 안내 */
+function applyPersonalUi() {
+  const on = state.personalMode === true;
+  const logoutBtn = $('#logoutBtn');
+  if (logoutBtn) logoutBtn.hidden = on;
+  const note = $('#personalModeNote');
+  if (note) note.hidden = !on;
+  document.body.classList.toggle('personal-mode', on);
 }
 
 function enterApp(user, plan) {
@@ -322,6 +342,7 @@ function enterApp(user, plan) {
     ? `가입 ${created.getFullYear()}.${String(created.getMonth() + 1).padStart(2, '0')}.${String(created.getDate()).padStart(2, '0')}`
     : '';
   if (plan) setPlan(plan);
+  applyPersonalUi();
   setTab(location.hash.replace('#', '') || 'plan', { push: false });
   registerServiceWorker();
   maybeShowInstallHint();
@@ -2262,6 +2283,29 @@ async function loadStarter() {
 
 /* ─────────────── 인증 ─────────────── */
 
+/**
+ * 개인용 모드의 자동 로그인 — 쿠키가 없거나 만료돼도 기본 계정 세션을 다시 붙입니다.
+ * 성공하면 { user, plan } 을, 실패하면 null 을 돌려줍니다.
+ */
+async function autoPersonalSession() {
+  try {
+    const res = await fetch('/api/auth/personal-session', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.user) return null;
+    state.user = data.user;
+    if (data.plan) setPlan(data.plan);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 function setAuthMode(mode) {
   state.mode = mode;
   $$('#authMode button').forEach((btn) => {
@@ -2313,6 +2357,10 @@ async function submitAuth(event) {
 }
 
 async function logout() {
+  if (state.personalMode) {
+    toast('개인 사용 모드에서는 로그인이 필요 없어요.');
+    return;
+  }
   try {
     await api('/api/auth/logout', { method: 'POST', body: {} });
   } catch {
@@ -2882,6 +2930,9 @@ async function boot() {
       .then((r) => r.json())
       .catch(() => null);
     if (config?.version) $('#appVersion').textContent = config.version;
+    // requireAuth=false(기본) 면 개인용 모드 — 로그인 화면을 건너뜁니다.
+    state.personalMode = config?.requireAuth === false;
+    applyPersonalUi();
   } catch {
     /* 무시 */
   }
@@ -2895,9 +2946,18 @@ async function boot() {
       }
     }
   } catch {
-    /* 네트워크 오류 → 로그인 화면 */
+    /* 네트워크 오류 → 아래에서 한 번 더 시도 */
   }
-  showAuth();
+  // 개인용 모드인데 세션이 없으면 자동 세션을 붙여 바로 메인 화면으로 들어갑니다.
+  if (state.personalMode) {
+    const data = await autoPersonalSession();
+    if (data?.user) {
+      enterApp(data.user, data.plan);
+      return;
+    }
+  }
+  // 여기까지 왔으면 서버에 연결하지 못한 것입니다 — 개인용 모드에서도 화면이 멈추지 않게 마지막 수단으로 로그인 화면을 보여 줍니다.
+  showAuth({ force: true });
 }
 
 boot();
